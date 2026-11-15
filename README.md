@@ -4,7 +4,7 @@ Online booking website for **PXCUTZZ**, a men's salon / barbershop in Surrey, BC
 Clients pick a service, pick a day, pick a time, enter their details, and book.
 The salon sees bookings in the **Manage** view and confirms them.
 
-- Salon: 9728 120A St, Surrey, BC V3V 4H6, Canada · +1 672-588-2101 · pxcutzz@gmail.com
+- Salon: 9385 120 St, Unit 102, Surrey, BC, Canada · +1 672-588-2101 · pxcutzz@gmail.com
 - Hours: Wednesday–Monday, 9:00 AM – 9:00 PM · **Closed Tuesday** (America/Vancouver time)
 - No Beard Perms service (removed by the owner).
 

@@ -159,13 +159,24 @@ async function loadBookings() {
     });
   } catch (e) {
     if (e.message.includes('Admin token')) {
-      const token = prompt('This Manage view needs the admin token set on the server (ADMIN_TOKEN). Enter it:');
-      if (token) { state.adminToken = token; sessionStorage.setItem('pxcutzz_admin_token', token); loadBookings(); }
-      else { err.textContent = 'Admin token required to view bookings.'; err.classList.remove('hidden'); }
+      err.textContent = 'Admin token required to view bookings. Enter it below to unlock.';
+      err.classList.remove('hidden');
+      $('adminTokenRow').classList.remove('hidden');
+      $('adminTokenInput').focus();
     } else {
       err.textContent = e.message; err.classList.remove('hidden');
     }
   }
+}
+
+function unlockBookings() {
+  const token = $('adminTokenInput').value.trim();
+  if (!token) return;
+  state.adminToken = token;
+  sessionStorage.setItem('pxcutzz_admin_token', token);
+  $('adminTokenRow').classList.add('hidden');
+  $('adminTokenInput').value = '';
+  loadBookings();
 }
 
 $('serviceSelect').addEventListener('change', (e) => selectService(e.target.value));
@@ -177,6 +188,8 @@ $('backToTimeBtn').onclick = () => setStep(3);
 $('bookingForm').addEventListener('submit', submitBooking);
 $('bookAnotherBtn').onclick = () => { $('bookingForm').reset(); setStep(1); };
 $('refreshBookingsBtn').onclick = loadBookings;
+$('unlockBtn').onclick = unlockBookings;
+$('adminTokenInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') unlockBookings(); });
 $('dateInput').addEventListener('change', () => { if (!$('stepTime').classList.contains('hidden')) loadSlots(); });
 
 loadServices();

@@ -8,6 +8,7 @@ h1, h2, h3 { font-family:"Playfair Display",Georgia,"Times New Roman",serif; }
 .topbar-inner { display:flex; justify-content:space-between; align-items:center; height:56px; }
 .brand { display:flex; align-items:center; gap:10px; font-weight:800; letter-spacing:.08em; font-family:"Playfair Display",Georgia,serif; font-size:20px; color:#e8c86a; }
 .logo-mark { background:var(--accent-light); color:#1d1710; width:32px; height:32px; border-radius:8px; display:grid; place-items:center; font-size:18px; font-family:"Playfair Display",Georgia,serif; }
+.brand-logo { height:42px; width:auto; display:block; border-radius:8px; }
 .topbar nav a { color:#e8ddc2; margin-left:18px; text-decoration:none; font-size:14px; }
 .topbar nav a:hover { color:#fff; }
 .hero { background:linear-gradient(rgba(20,14,7,.78),rgba(20,14,7,.72)),url(/photos/salon-1.jpg) center/cover no-repeat; color:#fff; padding:72px 0 56px; margin:0 calc(50% - 50vw); }

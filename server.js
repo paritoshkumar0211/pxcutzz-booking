@@ -12,7 +12,11 @@
  * GMAIL_APP_PASSWORD are set. Bookings always save even if email is
  * not configured; the API reports emailSent: false in that case.
  *
- * No SMS gateway is connected — SMS is a future step (see README).
+ * SMS: Twilio, only when TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and
+ * TWILIO_PHONE_NUMBER are all set. Booking confirmations and
+ * 1-day-before reminders are sent fire-and-forget — a booking never
+ * fails because SMS is unconfigured or a send fails. The API reports
+ * smsConfigured in /api/health.
  */
 
 const express = require('express');
@@ -32,6 +36,8 @@ const OPEN_MINUTES = 9 * 60; // 9:00 AM
 const CLOSE_MINUTES = 21 * 60; // 9:00 PM
 const CLOSED_WEEKDAY = 2; // Tuesday (0=Sunday)
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || ''; // if set, Manage view needs it
+// Owner's phone for booking alerts and the SMS test endpoint.
+const OWNER_PHONE = process.env.OWNER_PHONE || '+16725882101';
 
 // Services — prices/durations exactly as provided by the owner.
 // Durations marked "placeholder: true" were not given by the owner and
@@ -80,6 +86,16 @@ function initSqlite() {
   db.exec(`CREATE TABLE IF NOT EXISTS blocked_days (
     date TEXT PRIMARY KEY
   )`);
+  // Migration: reminder flag for 1-day-before SMS. Tolerates DBs created
+  // before this column existed (ALTER fails harmlessly if present).
+  try {
+    const cols = db.prepare('PRAGMA table_info(bookings)').all().map((c) => c.name);
+    if (!cols.includes('reminder_sent')) {
+      db.exec('ALTER TABLE bookings ADD COLUMN reminder_sent INTEGER NOT NULL DEFAULT 0');
+    }
+  } catch (e) {
+    console.warn('reminder_sent migration skipped:', e.message);
+  }
   return {
     kind: 'sqlite',
     listBlocked: () => db.prepare('SELECT date FROM blocked_days ORDER BY date').all().map((r) => r.date),
@@ -101,6 +117,13 @@ function initSqlite() {
     confirm: (id) => {
       const r = db.prepare("UPDATE bookings SET status = 'confirmed' WHERE id = ?").run(id);
       return r.changes > 0 ? db.prepare('SELECT * FROM bookings WHERE id = ?').get(id) : null;
+    },
+    // Confirmed bookings on a date whose reminder SMS has not gone out.
+    listDueReminders: (date) => db.prepare(
+      "SELECT * FROM bookings WHERE date = ? AND status = 'confirmed' AND COALESCE(reminder_sent, 0) = 0 ORDER BY start_minutes"
+    ).all(date),
+    markReminderSent: (id) => {
+      db.prepare('UPDATE bookings SET reminder_sent = 1 WHERE id = ?').run(id);
     },
   };
 }
@@ -139,6 +162,13 @@ function initJsonFallback() {
       if (!row) return null;
       row.status = 'confirmed'; flush(); return row;
     },
+    listDueReminders: (date) => rows
+      .filter((r) => r.date === date && r.status === 'confirmed' && !r.reminderSent)
+      .sort((a, b) => (a.startMinutes ?? 0) - (b.startMinutes ?? 0)),
+    markReminderSent: (id) => {
+      const row = rows.find((r) => r.id === Number(id));
+      if (row) { row.reminderSent = true; flush(); }
+    },
   };
 }
 
@@ -166,6 +196,7 @@ function norm(b) {
     name: b.name, phone: b.phone, email: b.email,
     status: b.status,
     emailSent: !!(b.email_sent ?? b.emailSent),
+    reminderSent: !!(b.reminder_sent ?? b.reminderSent),
     createdAt: b.created_at || b.createdAt,
   };
 }
@@ -177,6 +208,8 @@ function norm(b) {
     listOnDate: (d) => raw.listOnDate(d).map(norm),
     insert: (b) => norm(raw.insert(b)),
     confirm: (id) => norm(raw.confirm(id)),
+    listDueReminders: (d) => raw.listDueReminders(d).map(norm),
+    markReminderSent: (id) => raw.markReminderSent(id),
     listBlocked: () => raw.listBlocked(),
     isBlocked: (d) => raw.isBlocked(d),
     block: (d) => raw.block(d),
@@ -209,6 +242,13 @@ function timeToMinutes(t) {
 // Today's date (YYYY-MM-DD) in the salon timezone.
 function todayInSalonTz() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+
+// Tomorrow's date (YYYY-MM-DD) in the salon timezone.
+function tomorrowInSalonTz() {
+  const [y, mo, d] = todayInSalonTz().split('-').map(Number);
+  const t = new Date(Date.UTC(y, mo - 1, d + 1));
+  return t.toISOString().slice(0, 10);
 }
 
 // Weekday (0=Sunday) of a YYYY-MM-DD date.
@@ -290,6 +330,49 @@ async function sendBookingEmails(booking, service) {
 }
 
 // ---------------------------------------------------------------------------
+// SMS via Twilio (optional — everything still works when not configured)
+// ---------------------------------------------------------------------------
+// The client only initialises when all three env vars are set. The
+// account SID / auth token / phone number are NEVER written to code,
+// logs or responses — they live in Render env vars only.
+let smsClient = null;
+const SMS_FROM = process.env.TWILIO_PHONE_NUMBER || '';
+if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && SMS_FROM) {
+  try {
+    const twilio = require('twilio');
+    smsClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+    console.log('SMS: Twilio configured, sending from', SMS_FROM);
+  } catch (e) {
+    console.warn('SMS: twilio failed to initialise:', e.message);
+  }
+} else {
+  console.log('SMS: NOT configured (set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_PHONE_NUMBER). Bookings will still save; no texts will be sent.');
+}
+
+// Send one SMS. Returns true on success, false otherwise — never throws,
+// so callers can fire-and-forget without risking the booking response.
+async function sendSms(to, body) {
+  if (!smsClient) return false;
+  try {
+    await smsClient.messages.create({ from: SMS_FROM, to, body });
+    return true;
+  } catch (e) {
+    console.error('SMS send failed to', to, ':', e.message);
+    return false;
+  }
+}
+
+// Booking confirmation texts: one to the client, one to the owner.
+// Fire-and-forget — failures are logged by sendSms and never thrown.
+async function sendBookingSms(booking, service) {
+  const time = minutesToTime(booking.startMinutes);
+  const clientBody = `PXCUTZZ: Your ${service.name} appointment is confirmed for ${booking.date} at ${time}. See you at ${SALON_ADDRESS}. Reply to reschedule.`;
+  await sendSms(booking.phone, clientBody);
+  const ownerBody = `PXCUTZZ booking: ${service.name} — ${booking.date} at ${time} (${booking.name}, ${booking.phone}).`;
+  await sendSms(OWNER_PHONE, ownerBody);
+}
+
+// ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
 const app = express();
@@ -306,6 +389,7 @@ function publicBooking(b) {
     endTime: minutesToTime(b.endMinutes),
     name: b.name, phone: b.phone, email: b.email,
     status: b.status, emailSent: !!b.emailSent,
+    reminderSent: !!b.reminderSent,
     createdAt: b.created_at || b.createdAt,
   };
 }
@@ -319,7 +403,7 @@ function requireAdmin(req, res, next) {
 
 app.get('/api/health', (req, res) => res.json({
   ok: true, salon: SALON_NAME, storage: store.kind,
-  emailConfigured: !!mailer, adminProtected: !!ADMIN_TOKEN,
+  emailConfigured: !!mailer, smsConfigured: !!smsClient, adminProtected: !!ADMIN_TOKEN,
 }));
 
 app.get('/api/info', (req, res) => res.json({
@@ -383,6 +467,9 @@ app.post('/api/bookings', async (req, res) => {
     } catch (_) { /* flag stays false; the emails did go out */ }
   }
   saved.emailSent = emailSent;
+  // Confirmation texts (client + owner). Fire-and-forget: the booking
+  // response never waits on Twilio and never fails because of SMS.
+  sendBookingSms(saved, service).catch((e) => console.error('SMS send failed:', e.message));
   res.status(201).json({
     booking: saved,
     emailSent,
@@ -400,6 +487,34 @@ app.post('/api/bookings/:id/confirm', requireAdmin, (req, res) => {
   const row = store.confirm(req.params.id);
   if (!row) return res.status(404).json({ error: 'Booking not found.' });
   res.json(publicBooking(row));
+});
+
+// 1-day-before reminder texts. Admin-only; call it once a day (e.g. from
+// a scheduled job). Idempotent: a booking is flagged reminder_sent only
+// after its text succeeds, and only unflagged bookings are picked up,
+// so a second call never double-texts anyone.
+app.post('/api/reminders/send-due', requireAdmin, async (req, res) => {
+  const tomorrow = tomorrowInSalonTz();
+  const due = store.listDueReminders(tomorrow);
+  let sent = 0, failed = 0, skipped = 0;
+  for (const b of due) {
+    if (!smsClient) { skipped++; continue; }
+    const body = `PXCUTZZ reminder: your ${b.serviceName} appointment is tomorrow (${b.date}) at ${minutesToTime(b.startMinutes)}. See you soon!`;
+    const ok = await sendSms(b.phone, body);
+    if (ok) { store.markReminderSent(b.id); sent++; }
+    else failed++;
+  }
+  res.json({ date: tomorrow, sent, failed, skipped, smsConfigured: !!smsClient });
+});
+
+// Send a test text to the owner to prove the SMS service works.
+app.post('/api/sms/test', requireAdmin, async (req, res) => {
+  if (!smsClient) {
+    return res.status(503).json({ ok: false, error: 'SMS is not configured on this server (set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_PHONE_NUMBER).' });
+  }
+  const ok = await sendSms(OWNER_PHONE, 'PXCUTZZ: SMS service is working. Booking confirmations and reminders will come from this number.');
+  if (ok) return res.json({ ok: true, message: 'Test SMS sent to the owner.' });
+  return res.status(502).json({ ok: false, error: 'Test SMS failed to send. Check the Twilio credentials and number.' });
 });
 
 // Owner-blocked days — dates the salon is closed (e.g. holidays).
@@ -428,5 +543,5 @@ app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 app.listen(PORT, () => {
-  console.log(`${SALON_NAME} booking app listening on port ${PORT} (storage: ${store.kind}, email: ${mailer ? 'configured' : 'not configured'})`);
+  console.log(`${SALON_NAME} booking app listening on port ${PORT} (storage: ${store.kind}, email: ${mailer ? 'configured' : 'not configured'}, sms: ${smsClient ? 'configured' : 'not configured'})`);
 });

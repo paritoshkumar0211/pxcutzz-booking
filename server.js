@@ -93,7 +93,7 @@ function initSqlite() {
       const r = db.prepare(
         `INSERT INTO bookings (service_id, service_name, date, start_minutes, end_minutes,
           name, phone, email, status, email_sent, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?)`
       ).run(b.serviceId, b.serviceName, b.date, b.startMinutes, b.endMinutes,
         b.name, b.phone, b.email, b.emailSent ? 1 : 0, new Date().toISOString());
       return db.prepare('SELECT * FROM bookings WHERE id = ?').get(r.lastInsertRowid);
@@ -131,7 +131,7 @@ function initJsonFallback() {
     list: () => [...rows].sort((a, b) => (a.date + a.startMinutes) - (b.date + b.startMinutes)),
     listOnDate: (date) => rows.filter((r) => r.date === date && r.status !== 'cancelled'),
     insert: (b) => {
-      const row = { id: (rows.reduce((m, r) => Math.max(m, r.id || 0), 0) + 1), ...b, status: 'pending', emailSent: !!b.emailSent, createdAt: new Date().toISOString() };
+      const row = { id: (rows.reduce((m, r) => Math.max(m, r.id || 0), 0) + 1), ...b, status: 'confirmed', emailSent: !!b.emailSent, createdAt: new Date().toISOString() };
       rows.push(row); flush(); return row;
     },
     confirm: (id) => {
@@ -277,7 +277,7 @@ async function sendBookingEmails(booking, service) {
     from: `"${SALON_NAME} bookings" <${process.env.GMAIL_USER}>`,
     to: SALON_EMAIL,
     subject: `New booking: ${service.name} — ${booking.date} ${minutesToTime(booking.startMinutes)} (${booking.name})`,
-    text: `New booking at ${SALON_NAME}:\n\nService: ${service.name} (${service.priceLabel}, ${service.duration} min)\nWhen: ${when}\nClient: ${booking.name}\nPhone: ${booking.phone}\nEmail: ${booking.email}\n\nOpen the PXCUTZZ booking app (Manage view) to confirm this booking.`,
+    text: `New booking at ${SALON_NAME}:\n\nService: ${service.name} (${service.priceLabel}, ${service.duration} min)\nWhen: ${when}\nClient: ${booking.name}\nPhone: ${booking.phone}\nEmail: ${booking.email}\n\nThis booking is confirmed automatically — no action needed. You can view it in the owner dashboard at https://pxcutzz.com/dashboard.`,
   };
   try {
     await mailer.sendMail(clientMail);

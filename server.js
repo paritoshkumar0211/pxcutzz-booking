@@ -228,6 +228,13 @@ function minutesToTime(m) {
   return `${h12}:${mm} ${ampm}`;
 }
 
+// "2026-11-15" -> "Sun, Nov 15, 2026" (noon avoids timezone shifts).
+function formatDate(d) {
+  const dt = new Date(`${d}T12:00:00`);
+  if (isNaN(dt)) return d;
+  return new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }).format(dt);
+}
+
 function timeToMinutes(t) {
   const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec((t || '').trim());
   if (!m) return null;
@@ -306,17 +313,20 @@ if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
 
 async function sendBookingEmails(booking, service) {
   if (!mailer) return false;
-  const when = `${booking.date} at ${minutesToTime(booking.startMinutes)} – ${minutesToTime(booking.endMinutes)} (${TZ})`;
+  // booking is the public shape: time/endTime are already formatted
+  // strings; startMinutes/endMinutes are NOT present (recomputing them
+  // here produced "NaN:NaN AM").
+  const when = `${formatDate(booking.date)} at ${booking.time} – ${booking.endTime} (${TZ})`;
   const clientMail = {
     from: `"${SALON_NAME}" <${process.env.GMAIL_USER}>`,
     to: booking.email,
-    subject: `Your ${SALON_NAME} appointment is booked — ${booking.date}`,
+    subject: `Your ${SALON_NAME} appointment is booked — ${formatDate(booking.date)}`,
     text: `Hi ${booking.name},\n\nYour appointment at ${SALON_NAME} is booked:\n\nService: ${service.name} (${service.priceLabel}, ${service.duration} min)\nWhen: ${when}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nIf you need to change or cancel, please reply to this email or call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
   };
   const salonMail = {
     from: `"${SALON_NAME} bookings" <${process.env.GMAIL_USER}>`,
     to: SALON_EMAIL,
-    subject: `New booking: ${service.name} — ${booking.date} ${minutesToTime(booking.startMinutes)} (${booking.name})`,
+    subject: `New booking: ${service.name} — ${formatDate(booking.date)} ${booking.time} (${booking.name})`,
     text: `New booking at ${SALON_NAME}:\n\nService: ${service.name} (${service.priceLabel}, ${service.duration} min)\nWhen: ${when}\nClient: ${booking.name}\nPhone: ${booking.phone}\nEmail: ${booking.email}\n\nThis booking is confirmed automatically — no action needed. You can view it in the owner dashboard at https://pxcutzz.com/dashboard.`,
   };
   try {
@@ -365,10 +375,13 @@ async function sendSms(to, body) {
 // Booking confirmation texts: one to the client, one to the owner.
 // Fire-and-forget — failures are logged by sendSms and never thrown.
 async function sendBookingSms(booking, service) {
-  const time = minutesToTime(booking.startMinutes);
-  const clientBody = `PXCUTZZ: Your ${service.name} appointment is confirmed for ${booking.date} at ${time}. See you at ${SALON_ADDRESS}. To change or cancel call 6725882101.`;
+  // booking is the public shape: time is already formatted, startMinutes
+  // is NOT present — recomputing it here produced "NaN:NaN AM".
+  const time = booking.time;
+  const date = formatDate(booking.date);
+  const clientBody = `PXCUTZZ: Your ${service.name} appointment is confirmed for ${date} at ${time}. See you at ${SALON_ADDRESS}. To change or cancel call 6725882101.`;
   await sendSms(booking.phone, clientBody);
-  const ownerBody = `PXCUTZZ booking: ${service.name} — ${booking.date} at ${time} (${booking.name}, ${booking.phone}).`;
+  const ownerBody = `PXCUTZZ booking: ${service.name} — ${date} at ${time} (${booking.name}, ${booking.phone}).`;
   await sendSms(OWNER_PHONE, ownerBody);
 }
 
@@ -499,7 +512,7 @@ app.post('/api/reminders/send-due', requireAdmin, async (req, res) => {
   let sent = 0, failed = 0, skipped = 0;
   for (const b of due) {
     if (!smsClient) { skipped++; continue; }
-    const body = `PXCUTZZ reminder: your ${b.serviceName} appointment is tomorrow (${b.date}) at ${minutesToTime(b.startMinutes)}. See you soon! To change or cancel call 6725882101.`;
+    const body = `PXCUTZZ reminder: your ${b.serviceName} appointment is tomorrow (${formatDate(b.date)}) at ${minutesToTime(b.startMinutes)}. See you soon! To change or cancel call 6725882101.`;
     const ok = await sendSms(b.phone, body);
     if (ok) { store.markReminderSent(b.id); sent++; }
     else failed++;

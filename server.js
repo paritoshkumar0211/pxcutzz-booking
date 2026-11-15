@@ -77,8 +77,15 @@ function initSqlite() {
     email_sent INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS blocked_days (
+    date TEXT PRIMARY KEY
+  )`);
   return {
     kind: 'sqlite',
+    listBlocked: () => db.prepare('SELECT date FROM blocked_days ORDER BY date').all().map((r) => r.date),
+    isBlocked: (date) => !!db.prepare('SELECT 1 FROM blocked_days WHERE date = ?').get(date),
+    block: (date) => { db.prepare('INSERT OR IGNORE INTO blocked_days (date) VALUES (?)').run(date); },
+    unblock: (date) => { db.prepare('DELETE FROM blocked_days WHERE date = ?').run(date); },
     list: () => db.prepare('SELECT * FROM bookings ORDER BY date, start_minutes').all(),
     listOnDate: (date) =>
       db.prepare("SELECT * FROM bookings WHERE date = ? AND status != 'cancelled'").all(date),
@@ -107,8 +114,20 @@ function initJsonFallback() {
   } catch (_) { rows = []; }
   let dirty = false;
   const flush = () => { try { fs.writeFileSync(file, JSON.stringify(rows, null, 2)); } catch (_) { /* in-memory only */ } };
+  // Blocked days (owner-blocked dates) — separate JSON file, same pattern.
+  const blockedFile = path.join(DATA_DIR, 'blocked-days.json');
+  let blocked = [];
+  try {
+    if (fs.existsSync(blockedFile)) blocked = JSON.parse(fs.readFileSync(blockedFile, 'utf8'));
+    if (!Array.isArray(blocked)) blocked = [];
+  } catch (_) { blocked = []; }
+  const flushBlocked = () => { try { fs.writeFileSync(blockedFile, JSON.stringify(blocked, null, 2)); } catch (_) { /* in-memory only */ } };
   return {
     kind: 'json',
+    listBlocked: () => [...blocked].sort(),
+    isBlocked: (date) => blocked.includes(date),
+    block: (date) => { if (!blocked.includes(date)) { blocked.push(date); blocked.sort(); flushBlocked(); } },
+    unblock: (date) => { blocked = blocked.filter((d) => d !== date); flushBlocked(); },
     list: () => [...rows].sort((a, b) => (a.date + a.startMinutes) - (b.date + b.startMinutes)),
     listOnDate: (date) => rows.filter((r) => r.date === date && r.status !== 'cancelled'),
     insert: (b) => {
@@ -158,6 +177,10 @@ function norm(b) {
     listOnDate: (d) => raw.listOnDate(d).map(norm),
     insert: (b) => norm(raw.insert(b)),
     confirm: (id) => norm(raw.confirm(id)),
+    listBlocked: () => raw.listBlocked(),
+    isBlocked: (d) => raw.isBlocked(d),
+    block: (d) => raw.block(d),
+    unblock: (d) => raw.unblock(d),
   };
 }
 
@@ -315,6 +338,8 @@ app.get('/api/slots', (req, res) => {
   if (date < todayInSalonTz()) return res.status(400).json({ error: 'Please pick today or a future date.' });
   if (weekdayOf(date) === CLOSED_WEEKDAY)
     return res.json({ date, closed: true, message: 'The salon is closed on Tuesdays.', slots: [] });
+  if (store.isBlocked(date))
+    return res.json({ date, closed: true, blocked: true, message: 'The salon is closed on this day.', slots: [] });
   res.json({ date, closed: false, slots: availableSlots(service, date) });
 });
 
@@ -326,6 +351,8 @@ app.post('/api/bookings', async (req, res) => {
     return res.status(400).json({ error: 'Please pick today or a future date.' });
   if (weekdayOf(date) === CLOSED_WEEKDAY)
     return res.status(400).json({ error: 'The salon is closed on Tuesdays.' });
+  if (store.isBlocked(date))
+    return res.status(400).json({ error: 'The salon is closed on that day.' });
   const startMinutes = timeToMinutes(time);
   if (startMinutes === null) return res.status(400).json({ error: 'Please choose a valid time slot.' });
   if (startMinutes < OPEN_MINUTES || startMinutes + service.duration > CLOSE_MINUTES)
@@ -374,6 +401,29 @@ app.post('/api/bookings/:id/confirm', requireAdmin, (req, res) => {
   if (!row) return res.status(404).json({ error: 'Booking not found.' });
   res.json(publicBooking(row));
 });
+
+// Owner-blocked days — dates the salon is closed (e.g. holidays).
+// All three endpoints need the admin token.
+app.get('/api/blocked-days', requireAdmin, (req, res) => {
+  res.json({ dates: store.listBlocked() });
+});
+
+app.post('/api/blocked-days', requireAdmin, (req, res) => {
+  const { date } = req.body || {};
+  if (!isValidDate(date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD.' });
+  store.block(date);
+  res.status(201).json({ dates: store.listBlocked() });
+});
+
+app.delete('/api/blocked-days/:date', requireAdmin, (req, res) => {
+  if (!isValidDate(req.params.date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD.' });
+  store.unblock(req.params.date);
+  res.json({ dates: store.listBlocked() });
+});
+
+// Owner booking dashboard (separate page; the Manage section on the
+// main site is unchanged).
+app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 

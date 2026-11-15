@@ -1,6 +1,6 @@
 /* PXCUTZZ booking frontend — vanilla JS, no build step. */
 const $ = (id) => document.getElementById(id);
-const state = { services: [], service: null, date: null, slot: null, adminToken: sessionStorage.getItem('pxcutzz_admin_token') || '' };
+const state = { services: [], service: null, date: null, slot: null, adminToken: localStorage.getItem('pxcutzz_admin_token') || '' };
 
 function showError(msg) {
   const el = $('stepError');
@@ -173,7 +173,7 @@ function unlockBookings() {
   const token = $('adminTokenInput').value.trim();
   if (!token) return;
   state.adminToken = token;
-  sessionStorage.setItem('pxcutzz_admin_token', token);
+  localStorage.setItem('pxcutzz_admin_token', token);
   $('adminTokenRow').classList.add('hidden');
   $('adminTokenInput').value = '';
   loadBookings();

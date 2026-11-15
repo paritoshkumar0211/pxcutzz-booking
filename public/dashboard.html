@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Booking Dashboard — PXCUTZZ (Owner)</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="dash-header">
+  <div class="wrap">
+    <p class="dash-eyebrow">Owner Access</p>
+    <h1>Booking Dashboard</h1>
+    <p class="dash-sub">PXCUTZZ · Surrey, BC</p>
+    <p class="dash-back"><a href="/">← Back to pxcutzz.com</a></p>
+  </div>
+</header>
+
+<main class="wrap dash-main">
+  <div id="dashError" class="alert error hidden"></div>
+
+  <div class="dash-token hidden" id="dashTokenRow">
+    <p class="muted">Enter your admin token to see bookings.</p>
+    <div class="row">
+      <input type="password" id="dashTokenInput" placeholder="Enter admin token" autocomplete="off">
+      <button class="btn primary" id="dashUnlockBtn" type="button">Unlock</button>
+    </div>
+  </div>
+
+  <div id="dashContent" class="hidden">
+    <div class="cal-nav">
+      <button class="btn cal-arrow" id="prevMonthBtn" type="button" aria-label="Previous month">‹</button>
+      <h2 id="calMonthLabel">November 2026</h2>
+      <button class="btn cal-arrow" id="nextMonthBtn" type="button" aria-label="Next month">›</button>
+    </div>
+
+    <div class="cal-weekdays"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
+    <div class="cal-grid" id="calGrid"></div>
+
+    <section class="day-detail" id="dayDetail">
+      <div class="day-detail-head">
+        <div>
+          <h2 id="dayTitle">Today</h2>
+          <p class="muted" id="dayCount"></p>
+        </div>
+        <div class="day-actions">
+          <button class="btn block-day" id="blockDayBtn" type="button">Block whole day</button>
+          <button class="btn primary" id="addBookingBtn" type="button">+ Add booking</button>
+        </div>
+      </div>
+
+      <form id="addBookingForm" class="hidden" novalidate>
+        <h3>Add a booking — <span id="addDateLabel"></span></h3>
+        <label class="field-label" for="addService">Service</label>
+        <select id="addService"></select>
+        <label class="field-label" for="addTime">Time</label>
+        <select id="addTime"></select>
+        <p class="muted" id="addTimeHint"></p>
+        <label>Client name <input type="text" id="addName" required autocomplete="off" placeholder="Client name"></label>
+        <label>Phone <input type="tel" id="addPhone" required autocomplete="off" placeholder="+1 ___-___-____"></label>
+        <label>Email (optional) <input type="email" id="addEmail" autocomplete="off" placeholder="you@example.com"></label>
+        <p class="muted small">If no email is given, no confirmation email is sent for this booking.</p>
+        <div id="addError" class="alert error hidden"></div>
+        <p id="addSuccess" class="alert success hidden"></p>
+        <div class="row">
+          <button type="button" class="btn" id="cancelAddBtn">Cancel</button>
+          <button type="submit" class="btn primary" id="addSubmitBtn">Save booking</button>
+        </div>
+      </form>
+
+      <table class="bookings-table dash-table">
+        <thead><tr><th>Time</th><th>Customer</th><th>Service</th><th>Phone</th><th></th></tr></thead>
+        <tbody id="dayRows"><tr><td colspan="5" class="muted">No bookings yet.</td></tr></tbody>
+      </table>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <strong>PXCUTZZ</strong> — Owner dashboard · Bookings are private to the salon owner.
+  </div>
+</footer>
+
+<script src="/dashboard.js"></script>
+</body>
+</html>

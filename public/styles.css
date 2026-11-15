@@ -47,7 +47,8 @@ h2 { font-size:30px; margin-bottom:6px; }
 .steps li.done { border-color:var(--ok); color:var(--ok); font-weight:700; }
 .wizard-step { background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:22px; max-width:620px; }
 .field-label { display:block; font-weight:700; margin-bottom:8px; }
-select, input[type="date"], input[type="text"], input[type="tel"], input[type="email"] { width:100%; padding:11px 12px; border:1px solid #cfc0a0; border-radius:10px; font-size:16px; margin-bottom:12px; background:#fff; }
+select, input[type="date"], input[type="text"], input[type="tel"], input[type="email"], input[type="password"] { width:100%; padding:11px 12px; border:1px solid #cfc0a0; border-radius:10px; font-size:16px; margin-bottom:12px; background:#fff; }
+#adminTokenInput { flex:1; margin-bottom:0; }
 form label { display:block; font-weight:600; font-size:14px; }
 .row { display:flex; gap:10px; margin-top:8px; }
 .slots { display:flex; flex-wrap:wrap; gap:10px; margin:12px 0; }

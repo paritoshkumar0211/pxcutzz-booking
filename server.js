@@ -37,7 +37,7 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN || ''; // if set, Manage view needs 
 // Durations marked "placeholder: true" were not given by the owner and
 // were set to 30 minutes. Do not present them as owner-confirmed.
 const SERVICES = [
-  { id: 'mens-haircuts', name: "Men's Haircuts", price: 25, priceLabel: '$25', duration: 30, placeholderDuration: true },
+  { id: 'mens-haircuts', name: "Men's Haircut", price: 30, priceLabel: '$30', duration: 30, placeholderDuration: true },
   { id: 'haircut-beard', name: 'Haircut & Beard', price: 45, priceLabel: '$45', duration: 45 },
   { id: 'skin-fades', name: 'Skin Fades', price: 25, priceLabel: '$25', duration: 30 },
   { id: 'hair-perms', name: 'Hair Perms', price: 120, priceLabel: '$120', duration: 45 },

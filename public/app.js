@@ -131,6 +131,10 @@ async function submitBooking(ev) {
   }
 }
 
+function smsBody(b) {
+  return `Hi ${b.name}! Your PXCUTZZ appointment is booked: ${b.serviceName} on ${b.date} at ${b.time}. Please arrive 5 minutes early. Need to change it? Just reply to this text. — PXCUTZZ`;
+}
+
 async function loadBookings() {
   const tbody = $('bookingRows');
   const err = $('manageError');
@@ -149,12 +153,13 @@ async function loadBookings() {
       tds[3].textContent = b.name;
       tds[4].textContent = b.phone;
       tds[5].textContent = b.status;
-      if (b.status !== 'confirmed') {
-        const btn = document.createElement('button');
-        btn.className = 'btn'; btn.textContent = 'Confirm';
-        btn.onclick = async () => { await api(`/api/bookings/${b.id}/confirm`, { method: 'POST' }); loadBookings(); };
-        tds[6].appendChild(btn);
-      }
+      // One-tap SMS to the client (no SMS gateway — opens the phone's
+      // messaging app with the confirmation text ready to send).
+      const sms = document.createElement('a');
+      sms.className = 'sms-link';
+      sms.textContent = 'Send SMS';
+      sms.href = `sms:${encodeURIComponent(b.phone)}?&body=${encodeURIComponent(smsBody(b))}`;
+      tds[6].appendChild(sms);
       tbody.appendChild(tr);
     });
   } catch (e) {

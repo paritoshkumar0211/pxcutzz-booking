@@ -27,7 +27,7 @@ const TZ = 'America/Vancouver';
 const SALON_NAME = 'PXCUTZZ';
 const SALON_EMAIL = process.env.SALON_EMAIL || 'pxcutzz@gmail.com';
 const SALON_PHONE = '+1 672-588-2101';
-const SALON_ADDRESS = '9728 120A St, Surrey, BC V3V 4H6, Canada';
+const SALON_ADDRESS = '9385 120 St, Unit 102, Surrey, BC, Canada';
 const OPEN_MINUTES = 9 * 60; // 9:00 AM
 const CLOSE_MINUTES = 21 * 60; // 9:00 PM
 const CLOSED_WEEKDAY = 2; // Tuesday (0=Sunday)

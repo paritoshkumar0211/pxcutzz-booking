@@ -29,6 +29,8 @@ h2 { font-size:30px; margin-bottom:6px; }
 .service-card .price { font-size:20px; font-weight:800; color:var(--accent); }
 .service-card .dur { color:var(--muted); font-size:13px; }
 .service-card .btn { margin-top:auto; }
+.top-banner { display:block; background:var(--accent-light); color:#1d1710; text-align:center; padding:11px 16px; font-weight:700; font-size:15px; text-decoration:none; }
+.top-banner:hover { background:#d4ab4d; }
 .membership-card { background:var(--surface); border:2px solid var(--accent-light); border-radius:14px; padding:22px; max-width:620px; }
 .membership-price { font-family:"Playfair Display",Georgia,serif; font-size:36px; font-weight:800; color:var(--accent); margin:0 0 8px; }
 .photo-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:14px; margin-top:14px; }

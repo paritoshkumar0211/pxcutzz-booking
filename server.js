@@ -42,7 +42,6 @@ const SERVICES = [
   { id: 'skin-fades', name: 'Skin Fades', price: 30, priceLabel: '$30', duration: 30 },
   { id: 'hair-perms', name: 'Hair Perms', price: 120, priceLabel: '$120', duration: 45 },
   { id: 'mens-facial', name: "Men's Facial Treatments", price: 50, priceLabel: 'from $50', duration: 30 },
-  { id: 'beard-trim-threading', name: 'Beard Trim and Threading', price: 25, priceLabel: '$25', duration: 30, placeholderDuration: true },
   { id: 'beard-trimming-styling', name: 'Beard Trimming and Lineup', price: 20, priceLabel: '$20', duration: 30, placeholderDuration: true },
   { id: 'beard-trim-waxing', name: 'Beard Trim and Waxing', price: 25, priceLabel: '$25', duration: 30 },
   { id: 'beard-lineup', name: 'Lineup with Straight Razor Beard', price: 10, priceLabel: '$10', duration: 30, placeholderDuration: true },

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PXCUTZZ — Men's Salon &amp; Barbershop | Book Online</title>
+<meta name="description" content="Book your haircut, beard trim, facial or perm online at PXCUTZZ men's salon, Surrey, BC. Open Wednesday–Monday, 9 AM–9 PM. Closed Tuesday.">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <div class="brand"><span class="logo-mark">P</span><span class="brand-name">PXCUTZZ</span></div>
+    <nav><a href="#services">Services</a><a href="#book">Book now</a><a href="#manage">Manage</a></nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Men's salon &amp; barbershop — Surrey, BC</p>
+      <h1>Look sharp. Book in minutes.</h1>
+      <p class="lede">Pick a service, choose a day and time, and you are booked. You will get an email confirmation, and so will the salon.</p>
+      <a class="btn primary" href="#book">Book an appointment</a>
+      <p class="hours-line" id="hoursLine">Open Wed–Mon, 9:00 AM – 9:00 PM · Closed Tuesday</p>
+    </div>
+    <div class="hero-card">
+      <h2>Visit us</h2>
+      <p>9728 120A St<br>Surrey, BC V3V 4H6, Canada</p>
+      <p><a href="tel:+16725882101">+1 672-588-2101</a><br><a href="mailto:pxcutzz@gmail.com">pxcutzz@gmail.com</a></p>
+      <p class="muted">Walk-ins welcome when a chair is free.</p>
+    </div>
+  </section>
+
+  <section id="services">
+    <h2>Services &amp; prices</h2>
+    <p class="muted">All prices in CAD. Durations marked * are estimates.</p>
+    <div class="grid" id="serviceGrid"></div>
+  </section>
+
+  <section id="book">
+    <h2>Book online</h2>
+    <ol class="steps" id="steps">
+      <li data-step="1" class="active">1 · Service</li>
+      <li data-step="2">2 · Day</li>
+      <li data-step="3">3 · Time</li>
+      <li data-step="4">4 · Your details</li>
+    </ol>
+    <div id="stepError" class="alert error hidden"></div>
+
+    <div id="wizard">
+      <div class="wizard-step" id="stepService">
+        <label class="field-label" for="serviceSelect">Choose a service</label>
+        <select id="serviceSelect"></select>
+        <p class="muted" id="serviceHint"></p>
+        <button class="btn primary" id="toDayBtn">Continue</button>
+      </div>
+
+      <div class="wizard-step hidden" id="stepDay">
+        <label class="field-label" for="dateInput">Choose a day</label>
+        <input type="date" id="dateInput">
+        <p class="muted">The salon is closed on Tuesdays.</p>
+        <div class="row">
+          <button class="btn" id="backToServiceBtn">Back</button>
+          <button class="btn primary" id="toTimeBtn">See times</button>
+        </div>
+      </div>
+
+      <div class="wizard-step hidden" id="stepTime">
+        <p class="field-label">Available times — <span id="slotSummary"></span></p>
+        <div class="slots" id="slotList"></div>
+        <div class="row">
+          <button class="btn" id="backToDayBtn">Back</button>
+        </div>
+      </div>
+
+      <div class="wizard-step hidden" id="stepDetails">
+        <p class="field-label">Your details — <span id="detailsSummary"></span></p>
+        <form id="bookingForm">
+          <label>Full name <input type="text" id="nameInput" required autocomplete="name"></label>
+          <label>Phone <input type="tel" id="phoneInput" required autocomplete="tel" placeholder="+1 ___-___-____"></label>
+          <label>Email <input type="email" id="emailInput" required autocomplete="email" placeholder="you@example.com"></label>
+          <p class="muted">Your confirmation email goes to this address.</p>
+          <div class="row">
+            <button type="button" class="btn" id="backToTimeBtn">Back</button>
+            <button type="submit" class="btn primary" id="submitBtn">Confirm booking</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="wizard-step hidden" id="stepDone">
+        <div class="confirmation">
+          <h3>You're booked! ✓</h3>
+          <p id="confirmationText"></p>
+          <p id="emailNote" class="muted"></p>
+          <button class="btn" id="bookAnotherBtn">Book another appointment</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="manage">
+    <h2>Manage bookings</h2>
+    <p class="muted">For the salon owner. Bookings are listed newest first. If an admin token is set on the server, you will be asked for it.</p>
+    <div class="row">
+      <button class="btn" id="refreshBookingsBtn">Refresh bookings</button>
+    </div>
+    <div id="manageError" class="alert error hidden"></div>
+    <table class="bookings-table">
+      <thead><tr><th>Date</th><th>Time</th><th>Service</th><th>Client</th><th>Phone</th><th>Status</th><th></th></tr></thead>
+      <tbody id="bookingRows"><tr><td colspan="7" class="muted">No bookings yet.</td></tr></tbody>
+    </table>
+    <p class="muted small">Note: email confirmations need Gmail SMTP configured on the server (see README). SMS is not connected yet — that is a future step.</p>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <strong>PXCUTZZ</strong> — Men's salon &amp; barbershop, Surrey, BC ·
+    <a href="tel:+16725882101">+1 672-588-2101</a> · <a href="mailto:pxcutzz@gmail.com">pxcutzz@gmail.com</a><br>
+    Open Wed–Mon, 9:00 AM – 9:00 PM · Closed Tuesday
+  </div>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>

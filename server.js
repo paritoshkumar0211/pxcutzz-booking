@@ -366,7 +366,7 @@ async function sendSms(to, body) {
 // Fire-and-forget — failures are logged by sendSms and never thrown.
 async function sendBookingSms(booking, service) {
   const time = minutesToTime(booking.startMinutes);
-  const clientBody = `PXCUTZZ: Your ${service.name} appointment is confirmed for ${booking.date} at ${time}. See you at ${SALON_ADDRESS}. Reply to reschedule.`;
+  const clientBody = `PXCUTZZ: Your ${service.name} appointment is confirmed for ${booking.date} at ${time}. See you at ${SALON_ADDRESS}. To change or cancel call 6725882101.`;
   await sendSms(booking.phone, clientBody);
   const ownerBody = `PXCUTZZ booking: ${service.name} — ${booking.date} at ${time} (${booking.name}, ${booking.phone}).`;
   await sendSms(OWNER_PHONE, ownerBody);
@@ -499,7 +499,7 @@ app.post('/api/reminders/send-due', requireAdmin, async (req, res) => {
   let sent = 0, failed = 0, skipped = 0;
   for (const b of due) {
     if (!smsClient) { skipped++; continue; }
-    const body = `PXCUTZZ reminder: your ${b.serviceName} appointment is tomorrow (${b.date}) at ${minutesToTime(b.startMinutes)}. See you soon!`;
+    const body = `PXCUTZZ reminder: your ${b.serviceName} appointment is tomorrow (${b.date}) at ${minutesToTime(b.startMinutes)}. See you soon! To change or cancel call 6725882101.`;
     const ok = await sendSms(b.phone, body);
     if (ok) { store.markReminderSent(b.id); sent++; }
     else failed++;

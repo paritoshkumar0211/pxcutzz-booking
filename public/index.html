@@ -141,6 +141,10 @@
     <div class="row">
       <button class="btn" id="refreshBookingsBtn">Refresh bookings</button>
     </div>
+    <div class="row hidden" id="adminTokenRow">
+      <input type="password" id="adminTokenInput" placeholder="Enter admin token" autocomplete="off">
+      <button class="btn primary" id="unlockBtn" type="button">Unlock</button>
+    </div>
     <div id="manageError" class="alert error hidden"></div>
     <table class="bookings-table">
       <thead><tr><th>Date</th><th>Time</th><th>Service</th><th>Client</th><th>Phone</th><th>Status</th><th></th></tr></thead>

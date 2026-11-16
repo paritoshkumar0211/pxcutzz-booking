@@ -23,7 +23,7 @@
 <header class="topbar">
   <div class="wrap topbar-inner">
     <div class="brand"><img class="brand-logo" src="/photos/logo.png" alt="PXCUTZZ logo"></div>
-    <nav><a href="#services">Services</a><a href="#photos">Photos</a><a href="#book">Book now</a><a href="#manage">Manage</a></nav>
+    <nav><a href="#services">Services</a><a href="#photos">Photos</a><a href="#book">Book now</a></nav>
   </div>
 </header>
 
@@ -135,23 +135,6 @@
     </div>
   </section>
 
-  <section id="manage">
-    <h2>Manage bookings</h2>
-    <p class="muted">For the salon owner. Bookings are listed newest first. If an admin token is set on the server, you will be asked for it.</p>
-    <div class="row">
-      <button class="btn" id="refreshBookingsBtn">Refresh bookings</button>
-    </div>
-    <div class="row hidden" id="adminTokenRow">
-      <input type="password" id="adminTokenInput" placeholder="Enter admin token" autocomplete="off">
-      <button class="btn primary" id="unlockBtn" type="button">Unlock</button>
-    </div>
-    <div id="manageError" class="alert error hidden"></div>
-    <table class="bookings-table">
-      <thead><tr><th>Date</th><th>Time</th><th>Service</th><th>Client</th><th>Phone</th><th>Status</th><th></th></tr></thead>
-      <tbody id="bookingRows"><tr><td colspan="7" class="muted">No bookings yet.</td></tr></tbody>
-    </table>
-    <p class="muted small">Note: email confirmations need Gmail SMTP configured on the server (see README). SMS is not connected yet — that is a future step.</p>
-  </section>
 </main>
 
 <footer>

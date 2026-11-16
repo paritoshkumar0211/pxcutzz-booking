@@ -115,6 +115,7 @@ async function submitBooking(ev) {
         name: $('nameInput').value.trim(),
         phone: $('phoneInput').value.trim(),
         email: $('emailInput').value.trim(),
+        joinMembership: $('joinMembershipInput').checked,
       }),
     });
     const b = res.booking;
@@ -122,6 +123,10 @@ async function submitBooking(ev) {
       `${b.name}, your ${b.serviceName} is booked for ${b.date} at ${b.time} – ${b.endTime} at PXCUTZZ, 9385 120 St, Unit 102, Surrey, BC.`;
     $('emailNote').textContent = res.emailNote || '';
     $('emailNote').classList.toggle('hidden', !res.emailNote);
+    $('membershipNote').textContent = res.membershipJoined
+      ? `You're now a PXCUTZZ member — we'll text you every 9 days to remind you to book your next haircut.`
+      : '';
+    $('membershipNote').classList.toggle('hidden', !res.membershipJoined);
     setStep(5);
   } catch (e) {
     showError(e.message);

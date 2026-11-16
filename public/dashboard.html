@@ -55,15 +55,17 @@
 
       <form id="addBookingForm" class="hidden" novalidate>
         <h3>Add a booking — <span id="addDateLabel"></span></h3>
+        <label class="block-check"><input type="checkbox" id="addBlock"> Block this time (no customer)</label>
         <label class="field-label" for="addService">Service</label>
         <select id="addService"></select>
-        <label class="field-label" for="addTime">Time</label>
-        <select id="addTime"></select>
+        <label class="field-label">Time</label>
+        <div class="slots" id="addSlotGrid"></div>
         <p class="muted" id="addTimeHint"></p>
         <label>Client name <input type="text" id="addName" required autocomplete="off" placeholder="Client name"></label>
         <label>Phone <input type="tel" id="addPhone" required autocomplete="off" placeholder="+1 ___-___-____"></label>
         <label>Email (optional) <input type="email" id="addEmail" autocomplete="off" placeholder="you@example.com"></label>
         <p class="muted small">If no email is given, no confirmation email is sent for this booking.</p>
+        <label>Notes (optional) <textarea id="addNotes" rows="2" autocomplete="off" placeholder="Anything to remember about this booking"></textarea></label>
         <div id="addError" class="alert error hidden"></div>
         <p id="addSuccess" class="alert success hidden"></p>
         <div class="row">
@@ -75,16 +77,18 @@
       <form id="editBookingForm" class="hidden" novalidate>
         <h3>Edit booking — <span id="editNameLabel"></span></h3>
         <input type="hidden" id="editId">
+        <p class="muted hidden" id="editBlockedNote">This time is blocked (no customer) — customer details don't apply.</p>
         <label class="field-label" for="editService">Service</label>
         <select id="editService"></select>
         <label class="field-label" for="editDate">Date</label>
         <input type="date" id="editDate">
-        <label class="field-label" for="editTime">Time</label>
-        <select id="editTime"></select>
+        <label class="field-label">Time</label>
+        <div class="slots" id="editSlotGrid"></div>
         <p class="muted" id="editTimeHint"></p>
         <label>Client name <input type="text" id="editName" required autocomplete="off" placeholder="Client name"></label>
         <label>Phone <input type="tel" id="editPhone" required autocomplete="off" placeholder="+1 ___-___-____"></label>
         <label>Email <input type="email" id="editEmail" autocomplete="off" placeholder="you@example.com"></label>
+        <label>Notes (optional) <textarea id="editNotes" rows="2" autocomplete="off" placeholder="Anything to remember about this booking"></textarea></label>
         <div id="editError" class="alert error hidden"></div>
         <p id="editSuccess" class="alert success hidden"></p>
         <div class="row">

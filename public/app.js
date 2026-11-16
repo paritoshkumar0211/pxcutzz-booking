@@ -37,16 +37,15 @@ async function loadServices() {
   state.services.forEach((s) => {
     const card = document.createElement('div');
     card.className = 'service-card';
-    card.innerHTML = `<h3></h3><div class="price"></div><div class="dur"></div><button class="btn">Book this</button>`;
+    card.innerHTML = `<h3></h3><div class="price"></div><button class="btn">Book this</button>`;
     card.querySelector('h3').textContent = s.name;
     card.querySelector('.price').textContent = s.priceLabel;
-    card.querySelector('.dur').textContent = `${s.duration} min${s.placeholderDuration ? ' *' : ''}`;
     card.querySelector('button').onclick = () => { selectService(s.id); setStep(2); };
     grid.appendChild(card);
 
     const opt = document.createElement('option');
     opt.value = s.id;
-    opt.textContent = `${s.name} — ${s.priceLabel} (${s.duration} min${s.placeholderDuration ? ' *' : ''})`;
+    opt.textContent = `${s.name} — ${s.priceLabel}`;
     sel.appendChild(opt);
   });
   selectService(state.services[0]?.id);
@@ -58,7 +57,7 @@ function selectService(id) {
     $('serviceSelect').value = state.service.id;
     $('serviceHint').textContent = state.service.priceOnRequest
       ? 'Price on request — the salon will confirm the price with you.'
-      : `${state.service.name}: ${state.service.priceLabel}, about ${state.service.duration} minutes.`;
+      : `${state.service.name}: ${state.service.priceLabel}.`;
   }
 }
 

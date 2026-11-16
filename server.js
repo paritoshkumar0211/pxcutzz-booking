@@ -3,10 +3,12 @@
  * Men's salon / barbershop, Surrey, BC, Canada.
  *
  * Single Node.js (Express) app, no build step.
- * Storage: SQLite file (better-sqlite3) in DATA_DIR, with a JSON-file
- * fallback if the native module cannot load. NOTE: on Render's free tier
- * the disk is ephemeral — bookings are lost on redeploy/restart. See
- * README.md for the persistent-storage options.
+ * Storage: Turso (hosted libSQL) when TURSO_DATABASE_URL and
+ * TURSO_AUTH_TOKEN are set — bookings then survive redeploys/restarts.
+ * Otherwise a local SQLite file (better-sqlite3) in DATA_DIR, with a
+ * JSON-file fallback if the native module cannot load. NOTE: on Render's
+ * free tier the local disk is ephemeral — bookings are lost on
+ * redeploy/restart. See README.md for the persistent-storage options.
  *
  * Email: nodemailer over Gmail SMTP, only when GMAIL_USER and
  * GMAIL_APP_PASSWORD are set. Bookings always save even if email is
@@ -118,12 +120,95 @@ function initSqlite() {
       const r = db.prepare("UPDATE bookings SET status = 'confirmed' WHERE id = ?").run(id);
       return r.changes > 0 ? db.prepare('SELECT * FROM bookings WHERE id = ?').get(id) : null;
     },
+    markEmailSent: (id) => {
+      db.prepare('UPDATE bookings SET email_sent = 1 WHERE id = ?').run(id);
+    },
     // Confirmed bookings on a date whose reminder SMS has not gone out.
     listDueReminders: (date) => db.prepare(
       "SELECT * FROM bookings WHERE date = ? AND status = 'confirmed' AND COALESCE(reminder_sent, 0) = 0 ORDER BY start_minutes"
     ).all(date),
     markReminderSent: (id) => {
       db.prepare('UPDATE bookings SET reminder_sent = 1 WHERE id = ?').run(id);
+    },
+  };
+}
+
+// Turso (hosted libSQL) — used when TURSO_DATABASE_URL and
+// TURSO_AUTH_TOKEN are set. Same tables, columns and SQL as the local
+// SQLite store (libSQL is SQLite-compatible); only the driver calls
+// are async (client.execute with args arrays). Rows come back as
+// objects keyed by column name, exactly like better-sqlite3.
+async function initTurso() {
+  const { createClient } = require('@libsql/client');
+  const client = createClient({
+    url: process.env.TURSO_DATABASE_URL,
+    authToken: process.env.TURSO_AUTH_TOKEN,
+  });
+  await client.execute(`CREATE TABLE IF NOT EXISTS bookings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    service_id TEXT NOT NULL,
+    service_name TEXT NOT NULL,
+    date TEXT NOT NULL,
+    start_minutes INTEGER NOT NULL,
+    end_minutes INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    email TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    email_sent INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  )`);
+  await client.execute(`CREATE TABLE IF NOT EXISTS blocked_days (
+    date TEXT PRIMARY KEY
+  )`);
+  // Same reminder_sent migration as the SQLite store.
+  const cols = await client.execute('PRAGMA table_info(bookings)');
+  const names = cols.rows.map((c) => c.name);
+  if (!names.includes('reminder_sent')) {
+    await client.execute('ALTER TABLE bookings ADD COLUMN reminder_sent INTEGER NOT NULL DEFAULT 0');
+  }
+  const rowsOf = (r) => r.rows;
+  return {
+    kind: 'turso',
+    listBlocked: async () => rowsOf(await client.execute('SELECT date FROM blocked_days ORDER BY date')).map((r) => r.date),
+    isBlocked: async (date) => rowsOf(await client.execute({ sql: 'SELECT 1 FROM blocked_days WHERE date = ?', args: [date] })).length > 0,
+    block: async (date) => { await client.execute({ sql: 'INSERT OR IGNORE INTO blocked_days (date) VALUES (?)', args: [date] }); },
+    unblock: async (date) => { await client.execute({ sql: 'DELETE FROM blocked_days WHERE date = ?', args: [date] }); },
+    list: async () => rowsOf(await client.execute('SELECT * FROM bookings ORDER BY date, start_minutes')),
+    listOnDate: async (date) =>
+      rowsOf(await client.execute({ sql: "SELECT * FROM bookings WHERE date = ? AND status != 'cancelled'", args: [date] })),
+    insert: async (b) => {
+      const r = await client.execute({
+        sql: `INSERT INTO bookings (service_id, service_name, date, start_minutes, end_minutes,
+          name, phone, email, status, email_sent, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?)`,
+        args: [b.serviceId, b.serviceName, b.date, b.startMinutes, b.endMinutes,
+          b.name, b.phone, b.email, b.emailSent ? 1 : 0, new Date().toISOString()],
+      });
+      let id = (r.lastInsertRowid !== undefined && r.lastInsertRowid !== null)
+        ? Number(r.lastInsertRowid) : null;
+      if (id === null) {
+        const maxRow = await client.execute('SELECT MAX(id) AS max_id FROM bookings');
+        id = Number(maxRow.rows[0].max_id);
+      }
+      const row = await client.execute({ sql: 'SELECT * FROM bookings WHERE id = ?', args: [id] });
+      return row.rows[0];
+    },
+    confirm: async (id) => {
+      await client.execute({ sql: "UPDATE bookings SET status = 'confirmed' WHERE id = ?", args: [id] });
+      const row = await client.execute({ sql: 'SELECT * FROM bookings WHERE id = ?', args: [id] });
+      return row.rows[0] || null;
+    },
+    // Confirmed bookings on a date whose reminder SMS has not gone out.
+    listDueReminders: async (date) => rowsOf(await client.execute({
+      sql: "SELECT * FROM bookings WHERE date = ? AND status = 'confirmed' AND COALESCE(reminder_sent, 0) = 0 ORDER BY start_minutes",
+      args: [date],
+    })),
+    markReminderSent: async (id) => {
+      await client.execute({ sql: 'UPDATE bookings SET reminder_sent = 1 WHERE id = ?', args: [id] });
+    },
+    markEmailSent: async (id) => {
+      await client.execute({ sql: 'UPDATE bookings SET email_sent = 1 WHERE id = ?', args: [id] });
     },
   };
 }
@@ -169,17 +254,58 @@ function initJsonFallback() {
       const row = rows.find((r) => r.id === Number(id));
       if (row) { row.reminderSent = true; flush(); }
     },
+    markEmailSent: (id) => {
+      const row = rows.find((r) => r.id === Number(id));
+      if (row) { row.emailSent = true; flush(); }
+    },
   };
 }
 
-try {
-  store = initSqlite();
-  console.log('Storage: SQLite file at', path.join(DATA_DIR, 'bookings.db'));
-} catch (e) {
-  console.warn('SQLite unavailable, using JSON-file fallback:', e.message);
-  store = initJsonFallback();
-  console.log('Storage: JSON file fallback');
+// Storage selection (async — Turso needs network + schema setup).
+// Turso first when its env vars are set; if it fails at startup the
+// server falls back to local SQLite and keeps working (bookings still
+// save) instead of crashing. Without the Turso vars, local SQLite is
+// the default, with the JSON-file fallback as a last resort.
+// The returned store has an async interface for every backend (await
+// works on the sync SQLite/JSON methods too), and rows are normalised
+// to camelCase — see norm() below. `store` is assigned before the
+// server starts listening (see the storeReady.then at the bottom).
+async function initStore() {
+  let raw = null;
+  if (process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN) {
+    try {
+      raw = await initTurso();
+      console.log('Storage: Turso (hosted libSQL) — bookings survive redeploys');
+    } catch (e) {
+      console.warn('TURSO UNAVAILABLE, falling back to local SQLite — bookings will NOT survive redeploys:', e.message);
+    }
+  }
+  if (!raw) {
+    try {
+      raw = initSqlite();
+      console.log('Storage: SQLite file at', path.join(DATA_DIR, 'bookings.db'));
+    } catch (e) {
+      console.warn('SQLite unavailable, using JSON-file fallback:', e.message);
+      raw = initJsonFallback();
+      console.log('Storage: JSON file fallback');
+    }
+  }
+  return {
+    kind: raw.kind,
+    list: async () => (await raw.list()).map(norm),
+    listOnDate: async (d) => (await raw.listOnDate(d)).map(norm),
+    insert: async (b) => norm(await raw.insert(b)),
+    confirm: async (id) => norm(await raw.confirm(id)),
+    listDueReminders: async (d) => (await raw.listDueReminders(d)).map(norm),
+    markReminderSent: async (id) => { await raw.markReminderSent(id); },
+    markEmailSent: async (id) => { await raw.markEmailSent(id); },
+    listBlocked: async () => await raw.listBlocked(),
+    isBlocked: async (d) => await raw.isBlocked(d),
+    block: async (d) => { await raw.block(d); },
+    unblock: async (d) => { await raw.unblock(d); },
+  };
 }
+const storeReady = initStore().then((s) => { store = s; });
 
 // Normalise rows to camelCase — SQLite returns snake_case columns,
 // the JSON fallback stores camelCase. Every consumer below relies on
@@ -198,22 +324,6 @@ function norm(b) {
     emailSent: !!(b.email_sent ?? b.emailSent),
     reminderSent: !!(b.reminder_sent ?? b.reminderSent),
     createdAt: b.created_at || b.createdAt,
-  };
-}
-{
-  const raw = store;
-  store = {
-    kind: raw.kind,
-    list: () => raw.list().map(norm),
-    listOnDate: (d) => raw.listOnDate(d).map(norm),
-    insert: (b) => norm(raw.insert(b)),
-    confirm: (id) => norm(raw.confirm(id)),
-    listDueReminders: (d) => raw.listDueReminders(d).map(norm),
-    markReminderSent: (id) => raw.markReminderSent(id),
-    listBlocked: () => raw.listBlocked(),
-    isBlocked: (d) => raw.isBlocked(d),
-    block: (d) => raw.block(d),
-    unblock: (d) => raw.unblock(d),
   };
 }
 
@@ -273,9 +383,9 @@ function isValidDate(dateStr) {
 // Slots available for a service on a date: 30-min starts, 9 AM–9 PM.
 // A slot is offered only if the whole service finishes by 9 PM, and on
 // "today" only if the slot starts in the future (Salon time).
-function availableSlots(service, dateStr) {
+async function availableSlots(service, dateStr) {
   if (weekdayOf(dateStr) === CLOSED_WEEKDAY) return [];
-  const taken = store.listOnDate(dateStr);
+  const taken = await store.listOnDate(dateStr);
   const nowMinutes = (() => {
     if (dateStr !== todayInSalonTz()) return -1;
     const parts = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
@@ -427,7 +537,7 @@ app.get('/api/info', (req, res) => res.json({
 
 app.get('/api/services', (req, res) => res.json(SERVICES));
 
-app.get('/api/slots', (req, res) => {
+app.get('/api/slots', async (req, res) => {
   const { date, serviceId } = req.query;
   const service = SERVICES.find((s) => s.id === serviceId);
   if (!service) return res.status(400).json({ error: 'Unknown service.' });
@@ -435,9 +545,9 @@ app.get('/api/slots', (req, res) => {
   if (date < todayInSalonTz()) return res.status(400).json({ error: 'Please pick today or a future date.' });
   if (weekdayOf(date) === CLOSED_WEEKDAY)
     return res.json({ date, closed: true, message: 'The salon is closed on Tuesdays.', slots: [] });
-  if (store.isBlocked(date))
+  if (await store.isBlocked(date))
     return res.json({ date, closed: true, blocked: true, message: 'The salon is closed on this day.', slots: [] });
-  res.json({ date, closed: false, slots: availableSlots(service, date) });
+  res.json({ date, closed: false, slots: await availableSlots(service, date) });
 });
 
 app.post('/api/bookings', async (req, res) => {
@@ -448,7 +558,7 @@ app.post('/api/bookings', async (req, res) => {
     return res.status(400).json({ error: 'Please pick today or a future date.' });
   if (weekdayOf(date) === CLOSED_WEEKDAY)
     return res.status(400).json({ error: 'The salon is closed on Tuesdays.' });
-  if (store.isBlocked(date))
+  if (await store.isBlocked(date))
     return res.status(400).json({ error: 'The salon is closed on that day.' });
   const startMinutes = timeToMinutes(time);
   if (startMinutes === null) return res.status(400).json({ error: 'Please choose a valid time slot.' });
@@ -460,24 +570,20 @@ app.post('/api/bookings', async (req, res) => {
     return res.status(400).json({ error: 'Please enter a valid email address.' });
 
   const endMinutes = startMinutes + service.duration;
-  const clash = store.listOnDate(date).some((b) => startMinutes < b.endMinutes && endMinutes > b.startMinutes);
+  const clash = (await store.listOnDate(date)).some((b) => startMinutes < b.endMinutes && endMinutes > b.startMinutes);
   if (clash) return res.status(409).json({ error: 'Sorry, that time was just taken. Please pick another slot.' });
 
-  const row = store.insert({
+  const row = await store.insert({
     serviceId: service.id, serviceName: service.name, date, startMinutes, endMinutes,
     name: String(name).trim(), phone: String(phone).trim(), email: String(email).trim().toLowerCase(),
     emailSent: false,
   });
   const saved = publicBooking(row);
   const emailSent = await sendBookingEmails(saved, service);
-  if (emailSent && store.kind === 'sqlite') {
-    // best-effort flag update (JSON fallback already stored false; acceptable)
-    try {
-      const Database = require('better-sqlite3');
-      const db = new Database(path.join(DATA_DIR, 'bookings.db'));
-      db.prepare('UPDATE bookings SET email_sent = 1 WHERE id = ?').run(row.id);
-      saved.emailSent = true;
-    } catch (_) { /* flag stays false; the emails did go out */ }
+  if (emailSent) {
+    // best-effort flag update (works on every backend); the emails did
+    // go out either way, so a failure here never fails the booking.
+    try { await store.markEmailSent(row.id); saved.emailSent = true; } catch (_) { /* flag stays false */ }
   }
   saved.emailSent = emailSent;
   // Confirmation texts (client + owner). Fire-and-forget: the booking
@@ -492,12 +598,12 @@ app.post('/api/bookings', async (req, res) => {
   });
 });
 
-app.get('/api/bookings', requireAdmin, (req, res) => {
-  res.json(store.list().map(publicBooking));
+app.get('/api/bookings', requireAdmin, async (req, res) => {
+  res.json((await store.list()).map(publicBooking));
 });
 
-app.post('/api/bookings/:id/confirm', requireAdmin, (req, res) => {
-  const row = store.confirm(req.params.id);
+app.post('/api/bookings/:id/confirm', requireAdmin, async (req, res) => {
+  const row = await store.confirm(req.params.id);
   if (!row) return res.status(404).json({ error: 'Booking not found.' });
   res.json(publicBooking(row));
 });
@@ -508,13 +614,13 @@ app.post('/api/bookings/:id/confirm', requireAdmin, (req, res) => {
 // so a second call never double-texts anyone.
 app.post('/api/reminders/send-due', requireAdmin, async (req, res) => {
   const tomorrow = tomorrowInSalonTz();
-  const due = store.listDueReminders(tomorrow);
+  const due = await store.listDueReminders(tomorrow);
   let sent = 0, failed = 0, skipped = 0;
   for (const b of due) {
     if (!smsClient) { skipped++; continue; }
     const body = `PXCUTZZ reminder: your ${b.serviceName} appointment is tomorrow (${formatDate(b.date)}) at ${minutesToTime(b.startMinutes)}. See you soon! To change or cancel call 6725882101.`;
     const ok = await sendSms(b.phone, body);
-    if (ok) { store.markReminderSent(b.id); sent++; }
+    if (ok) { await store.markReminderSent(b.id); sent++; }
     else failed++;
   }
   res.json({ date: tomorrow, sent, failed, skipped, smsConfigured: !!smsClient });
@@ -532,21 +638,21 @@ app.post('/api/sms/test', requireAdmin, async (req, res) => {
 
 // Owner-blocked days — dates the salon is closed (e.g. holidays).
 // All three endpoints need the admin token.
-app.get('/api/blocked-days', requireAdmin, (req, res) => {
-  res.json({ dates: store.listBlocked() });
+app.get('/api/blocked-days', requireAdmin, async (req, res) => {
+  res.json({ dates: await store.listBlocked() });
 });
 
-app.post('/api/blocked-days', requireAdmin, (req, res) => {
+app.post('/api/blocked-days', requireAdmin, async (req, res) => {
   const { date } = req.body || {};
   if (!isValidDate(date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD.' });
-  store.block(date);
-  res.status(201).json({ dates: store.listBlocked() });
+  await store.block(date);
+  res.status(201).json({ dates: await store.listBlocked() });
 });
 
-app.delete('/api/blocked-days/:date', requireAdmin, (req, res) => {
+app.delete('/api/blocked-days/:date', requireAdmin, async (req, res) => {
   if (!isValidDate(req.params.date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD.' });
-  store.unblock(req.params.date);
-  res.json({ dates: store.listBlocked() });
+  await store.unblock(req.params.date);
+  res.json({ dates: await store.listBlocked() });
 });
 
 // Owner booking dashboard (separate page; the Manage section on the
@@ -555,6 +661,10 @@ app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-app.listen(PORT, () => {
-  console.log(`${SALON_NAME} booking app listening on port ${PORT} (storage: ${store.kind}, email: ${mailer ? 'configured' : 'not configured'}, sms: ${smsClient ? 'configured' : 'not configured'})`);
+// Start listening only once storage is ready (Turso schema setup is
+// async) — no request can arrive before `store` is assigned.
+storeReady.then(() => {
+  app.listen(PORT, () => {
+    console.log(`${SALON_NAME} booking app listening on port ${PORT} (storage: ${store.kind}, email: ${mailer ? 'configured' : 'not configured'}, sms: ${smsClient ? 'configured' : 'not configured'})`);
+  });
 });

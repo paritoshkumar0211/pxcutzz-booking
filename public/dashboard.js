@@ -527,9 +527,13 @@ $('addMemberForm').addEventListener('submit', async (ev) => {
     const phone = $('addMemberPhone').value.trim();
     if (!name) throw new Error('Please enter the member name.');
     if (!phone) throw new Error('Please enter the member phone number.');
-    await api('/api/members', { method: 'POST', body: JSON.stringify({ name, phone }) });
+    const joinedDate = $('addMemberJoined').value || undefined;
+    const priorHaircuts = Math.min(3, Math.max(0, parseInt($('addMemberPrior').value, 10) || 0));
+    await api('/api/members', { method: 'POST', body: JSON.stringify({ name, phone, joinedDate, priorHaircuts }) });
     $('addMemberName').value = '';
     $('addMemberPhone').value = '';
+    $('addMemberJoined').value = '';
+    $('addMemberPrior').value = '0';
     ok.textContent = `${name} is now a member — first reminder goes in 9 days.`;
     ok.classList.remove('hidden');
     await reloadMembers();

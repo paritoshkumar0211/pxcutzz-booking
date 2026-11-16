@@ -1356,17 +1356,40 @@ function nextReminderOnGrid(joinedDate, today) {
 // and their next reminder date is today or earlier. After a text goes
 // out, the next reminder is the next date on the member's 9-day grid
 // from their join date, so a repeat call never double-texts and a late
-// send never drifts the schedule. The same call also sends the one-time
-// renewal reminder to members whose membership has finished.
+// send never drifts the schedule. A member who already has a haircut
+// booked in advance gets NO "book your appointment" text — the
+// reminder waits until the day after their latest upcoming haircut, so
+// they are nudged to book the one after that. (The 3-hour appointment
+// reminder is a different job and still goes out.) The same call also
+// sends the one-time renewal reminder to members whose membership has
+// finished.
 app.post('/api/members/reminders/send-due', requireAdmin, async (req, res) => {
   const today = todayInSalonTz();
   const members = await store.listMembers();
   const bookings = await store.list();
-  let sent = 0, failed = 0, skipped = 0;
+  let sent = 0, failed = 0, skipped = 0, skippedAlreadyBooked = 0;
   for (const m of members) {
     if (!m.active) { skipped++; continue; }
     if (memberFinished(m, bookings, today)) { skipped++; continue; }
     if (m.nextReminderDate > today) { skipped++; continue; }
+    // Already booked in advance? Don't send the "book your appointment"
+    // text — the member already has a haircut coming. Move the next
+    // reminder to the day after their latest upcoming haircut inside
+    // the membership month, so they are reminded to book the next one.
+    const memberPhone = normalizePhone(m.phone);
+    const upcomingDates = bookings
+      .filter((b) => normalizePhone(b.phone) === memberPhone
+        && HAIRCUT_SERVICE_IDS.includes(b.serviceId)
+        && b.status !== 'cancelled' && !b.blocked
+        && b.date >= today && b.date <= memberExpiryDate(m))
+      .map((b) => b.date);
+    const latestUpcoming = upcomingDates.length ? upcomingDates.sort().pop() : null;
+    if (latestUpcoming) {
+      await store.updateMember(m.id, { nextReminderDate: addDays(latestUpcoming, 1) });
+      skippedAlreadyBooked++;
+      skipped++;
+      continue;
+    }
     if (!smsClient) { skipped++; continue; }
     const body = `PXCUTZZ reminder: Hi ${m.name}, it's time to book your next membership haircut! Book online at pxcutzz.com or call 6725882101.`;
     const ok = await sendSms(m.phone, body);
@@ -1376,7 +1399,7 @@ app.post('/api/members/reminders/send-due', requireAdmin, async (req, res) => {
     } else failed++;
   }
   const renewals = await sendRenewalRemindersIfDue();
-  res.json({ date: today, sent, failed, skipped, renewals: renewals.sent, renewalsFailed: renewals.failed, smsConfigured: !!smsClient });
+  res.json({ date: today, sent, failed, skipped, skippedAlreadyBooked, renewals: renewals.sent, renewalsFailed: renewals.failed, smsConfigured: !!smsClient });
 });
 
 // Owner booking dashboard (separate page; the Manage section on the

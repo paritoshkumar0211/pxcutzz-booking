@@ -120,6 +120,35 @@ function initSqlite() {
       const r = db.prepare("UPDATE bookings SET status = 'confirmed' WHERE id = ?").run(id);
       return r.changes > 0 ? db.prepare('SELECT * FROM bookings WHERE id = ?').get(id) : null;
     },
+    complete: (id) => {
+      db.prepare("UPDATE bookings SET status = 'completed' WHERE id = ?").run(id);
+      return db.prepare('SELECT * FROM bookings WHERE id = ?').get(id) || null;
+    },
+    cancel: (id) => {
+      db.prepare("UPDATE bookings SET status = 'cancelled' WHERE id = ?").run(id);
+      return db.prepare('SELECT * FROM bookings WHERE id = ?').get(id) || null;
+    },
+    // Edit a booking. f holds the new field values (camelCase keys);
+    // resetReminder clears the reminder flag when the date moved, so a
+    // reminder can still go out for the new date.
+    update: (id, f) => {
+      const map = {
+        serviceId: 'service_id', serviceName: 'service_name', date: 'date',
+        startMinutes: 'start_minutes', endMinutes: 'end_minutes',
+        name: 'name', phone: 'phone', email: 'email',
+      };
+      const cols = [];
+      const args = [];
+      for (const [key, col] of Object.entries(map)) {
+        if (f[key] !== undefined) { cols.push(`${col} = ?`); args.push(f[key]); }
+      }
+      if (f.resetReminder) cols.push('reminder_sent = 0');
+      if (cols.length) {
+        args.push(id);
+        db.prepare(`UPDATE bookings SET ${cols.join(', ')} WHERE id = ?`).run(...args);
+      }
+      return db.prepare('SELECT * FROM bookings WHERE id = ?').get(id) || null;
+    },
     markEmailSent: (id) => {
       db.prepare('UPDATE bookings SET email_sent = 1 WHERE id = ?').run(id);
     },
@@ -199,6 +228,37 @@ async function initTurso() {
       const row = await client.execute({ sql: 'SELECT * FROM bookings WHERE id = ?', args: [id] });
       return row.rows[0] || null;
     },
+    complete: async (id) => {
+      await client.execute({ sql: "UPDATE bookings SET status = 'completed' WHERE id = ?", args: [id] });
+      const row = await client.execute({ sql: 'SELECT * FROM bookings WHERE id = ?', args: [id] });
+      return row.rows[0] || null;
+    },
+    cancel: async (id) => {
+      await client.execute({ sql: "UPDATE bookings SET status = 'cancelled' WHERE id = ?", args: [id] });
+      const row = await client.execute({ sql: 'SELECT * FROM bookings WHERE id = ?', args: [id] });
+      return row.rows[0] || null;
+    },
+    // Edit a booking. f holds the new field values (camelCase keys);
+    // resetReminder clears the reminder flag when the date moved.
+    update: async (id, f) => {
+      const map = {
+        serviceId: 'service_id', serviceName: 'service_name', date: 'date',
+        startMinutes: 'start_minutes', endMinutes: 'end_minutes',
+        name: 'name', phone: 'phone', email: 'email',
+      };
+      const cols = [];
+      const args = [];
+      for (const [key, col] of Object.entries(map)) {
+        if (f[key] !== undefined) { cols.push(`${col} = ?`); args.push(f[key]); }
+      }
+      if (f.resetReminder) cols.push('reminder_sent = 0');
+      if (cols.length) {
+        args.push(id);
+        await client.execute({ sql: `UPDATE bookings SET ${cols.join(', ')} WHERE id = ?`, args });
+      }
+      const row = await client.execute({ sql: 'SELECT * FROM bookings WHERE id = ?', args: [id] });
+      return row.rows[0] || null;
+    },
     // Confirmed bookings on a date whose reminder SMS has not gone out.
     listDueReminders: async (date) => rowsOf(await client.execute({
       sql: "SELECT * FROM bookings WHERE date = ? AND status = 'confirmed' AND COALESCE(reminder_sent, 0) = 0 ORDER BY start_minutes",
@@ -246,6 +306,27 @@ function initJsonFallback() {
       const row = rows.find((r) => r.id === Number(id));
       if (!row) return null;
       row.status = 'confirmed'; flush(); return row;
+    },
+    complete: (id) => {
+      const row = rows.find((r) => r.id === Number(id));
+      if (!row) return null;
+      row.status = 'completed'; flush(); return row;
+    },
+    cancel: (id) => {
+      const row = rows.find((r) => r.id === Number(id));
+      if (!row) return null;
+      row.status = 'cancelled'; flush(); return row;
+    },
+    // Edit a booking. f holds the new field values (camelCase keys);
+    // resetReminder clears the reminder flag when the date moved.
+    update: (id, f) => {
+      const row = rows.find((r) => r.id === Number(id));
+      if (!row) return null;
+      for (const k of ['serviceId', 'serviceName', 'date', 'startMinutes', 'endMinutes', 'name', 'phone', 'email']) {
+        if (f[k] !== undefined) row[k] = f[k];
+      }
+      if (f.resetReminder) row.reminderSent = false;
+      flush(); return row;
     },
     listDueReminders: (date) => rows
       .filter((r) => r.date === date && r.status === 'confirmed' && !r.reminderSent)
@@ -296,6 +377,9 @@ async function initStore() {
     listOnDate: async (d) => (await raw.listOnDate(d)).map(norm),
     insert: async (b) => norm(await raw.insert(b)),
     confirm: async (id) => norm(await raw.confirm(id)),
+    complete: async (id) => norm(await raw.complete(id)),
+    cancel: async (id) => norm(await raw.cancel(id)),
+    update: async (id, f) => norm(await raw.update(id, f)),
     listDueReminders: async (d) => (await raw.listDueReminders(d)).map(norm),
     markReminderSent: async (id) => { await raw.markReminderSent(id); },
     markEmailSent: async (id) => { await raw.markEmailSent(id); },
@@ -508,6 +592,8 @@ function publicBooking(b) {
     serviceId: b.service_id || b.serviceId,
     serviceName: b.service_name || b.serviceName,
     date: b.date,
+    startMinutes: b.startMinutes,
+    endMinutes: b.endMinutes,
     time: minutesToTime(b.startMinutes),
     endTime: minutesToTime(b.endMinutes),
     name: b.name, phone: b.phone, email: b.email,
@@ -604,6 +690,65 @@ app.get('/api/bookings', requireAdmin, async (req, res) => {
 
 app.post('/api/bookings/:id/confirm', requireAdmin, async (req, res) => {
   const row = await store.confirm(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Booking not found.' });
+  res.json(publicBooking(row));
+});
+
+// Mark a booking completed. Completed bookings still block their slot.
+app.post('/api/bookings/:id/complete', requireAdmin, async (req, res) => {
+  const row = await store.complete(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Booking not found.' });
+  res.json(publicBooking(row));
+});
+
+// Cancel a booking. Cancelled bookings no longer block their slot
+// (listOnDate excludes them), so the time becomes bookable again.
+app.post('/api/bookings/:id/cancel', requireAdmin, async (req, res) => {
+  const row = await store.cancel(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Booking not found.' });
+  res.json(publicBooking(row));
+});
+
+// Edit a booking (owner). Validates exactly like creation: service
+// exists, date valid and not in the past, not Tuesday, not a blocked
+// day, time valid and within opening hours, and no clash with other
+// (non-cancelled) bookings — excluding the booking itself.
+app.put('/api/bookings/:id', requireAdmin, async (req, res) => {
+  const all = await store.list();
+  const existing = all.find((b) => String(b.id) === String(req.params.id));
+  if (!existing) return res.status(404).json({ error: 'Booking not found.' });
+  const { serviceId, date, time, name, phone, email } = req.body || {};
+  const service = SERVICES.find((s) => s.id === (serviceId || existing.serviceId));
+  if (!service) return res.status(400).json({ error: 'Please choose a service.' });
+  const newDate = date || existing.date;
+  const newTime = time || existing.time;
+  if (!isValidDate(newDate) || newDate < todayInSalonTz())
+    return res.status(400).json({ error: 'Please pick today or a future date.' });
+  if (weekdayOf(newDate) === CLOSED_WEEKDAY)
+    return res.status(400).json({ error: 'The salon is closed on Tuesdays.' });
+  if (await store.isBlocked(newDate))
+    return res.status(400).json({ error: 'The salon is closed on that day.' });
+  const startMinutes = timeToMinutes(newTime);
+  if (startMinutes === null) return res.status(400).json({ error: 'Please choose a valid time slot.' });
+  if (startMinutes < OPEN_MINUTES || startMinutes + service.duration > CLOSE_MINUTES)
+    return res.status(400).json({ error: 'That time is outside opening hours (9:00 AM – 9:00 PM).' });
+  const newName = name ?? existing.name;
+  const newPhone = phone ?? existing.phone;
+  const newEmail = email ?? existing.email;
+  if (!newName || !String(newName).trim()) return res.status(400).json({ error: 'Please enter your name.' });
+  if (!newPhone || !String(newPhone).trim()) return res.status(400).json({ error: 'Please enter your phone number.' });
+  if (!newEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(newEmail).trim()))
+    return res.status(400).json({ error: 'Please enter a valid email address.' });
+  const endMinutes = startMinutes + service.duration;
+  const clash = (await store.listOnDate(newDate)).some((b) =>
+    String(b.id) !== String(existing.id) && startMinutes < b.endMinutes && endMinutes > b.startMinutes);
+  if (clash) return res.status(409).json({ error: 'That time is already taken. Please pick another slot.' });
+  const row = await store.update(existing.id, {
+    serviceId: service.id, serviceName: service.name, date: newDate,
+    startMinutes, endMinutes,
+    name: String(newName).trim(), phone: String(newPhone).trim(), email: String(newEmail).trim().toLowerCase(),
+    resetReminder: newDate !== existing.date,
+  });
   if (!row) return res.status(404).json({ error: 'Booking not found.' });
   res.json(publicBooking(row));
 });

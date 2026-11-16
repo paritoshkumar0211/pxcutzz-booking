@@ -252,13 +252,38 @@ function renderDayDetail() {
   }
   $('addBookingBtn').classList.toggle('hidden', isTuesday || isBlocked);
 
+  // Daily lunch break row (2:00–2:30 PM, blocked every open day).
+  const LUNCH_END = 14 * 60 + 30;
+  function lunchRow() {
+    const tr = document.createElement('tr');
+    tr.className = 'row-lunch';
+    const tdTime = document.createElement('td');
+    tdTime.textContent = '2:00 PM';
+    tr.appendChild(tdTime);
+    const tdNote = document.createElement('td');
+    tdNote.colSpan = 4;
+    tdNote.className = 'muted';
+    tdNote.textContent = '🍽️ Lunch break — 2:00–2:30 PM (blocked daily)';
+    tr.appendChild(tdNote);
+    return tr;
+  }
+  const showLunch = !isTuesday && !isBlocked;
+
   const tbody = $('dayRows');
   if (!rows.length) {
     tbody.innerHTML = `<tr><td colspan="5" class="muted">${isTuesday ? 'Closed on Tuesdays.' : isBlocked ? 'Day blocked — no bookings.' : 'No bookings yet.'}</td></tr>`;
+    if (showLunch) tbody.appendChild(lunchRow());
     return;
   }
   tbody.innerHTML = '';
+  let lunchInserted = false;
   rows.forEach((b) => {
+    // Insert the lunch row in time order, before the first booking
+    // starting at/after 2:30 PM.
+    if (showLunch && !lunchInserted && (b.startMinutes ?? 0) >= LUNCH_END) {
+      tbody.appendChild(lunchRow());
+      lunchInserted = true;
+    }
     const tr = document.createElement('tr');
     if (b.status === 'completed') tr.classList.add('row-done');
     if (b.status === 'cancelled') tr.classList.add('row-cancelled');
@@ -346,6 +371,8 @@ function renderDayDetail() {
     }
     tbody.appendChild(tr);
   });
+  // No booking at/after 2:30 PM — the lunch row goes at the end.
+  if (showLunch && !lunchInserted) tbody.appendChild(lunchRow());
 }
 
 // One-tap Complete, confirmed Cancel — then reload the bookings list.

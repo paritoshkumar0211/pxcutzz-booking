@@ -47,7 +47,7 @@ const OWNER_PHONE = process.env.OWNER_PHONE || '+16725882101';
 const SERVICES = [
   { id: 'skin-fade-haircut', name: 'Skin Fade (Haircut)', price: 30, priceLabel: '$30', duration: 30 },
   { id: 'haircut-beard', name: 'Haircut & Beard', price: 45, priceLabel: '$45', duration: 45 },
-  { id: 'hair-perms', name: 'Hair Perms', price: 120, priceLabel: '$120', duration: 45 },
+  { id: 'hair-perms', name: 'Hair Perms', price: 120, priceLabel: '$120', duration: 60 },
   { id: 'mens-facial', name: "Men's Facial Treatments", price: 50, priceLabel: 'from $50', duration: 30 },
   { id: 'beard-trimming-styling', name: 'Beard Trimming and Lineup', price: 20, priceLabel: '$20', duration: 30, placeholderDuration: true },
   { id: 'beard-trim-waxing', name: 'Beard Trim and Waxing', price: 25, priceLabel: '$25', duration: 30 },

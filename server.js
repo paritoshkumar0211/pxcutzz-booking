@@ -54,9 +54,6 @@ const OWNER_PHONE = process.env.OWNER_PHONE || '+16725882101';
 // were set to 30 minutes. Do not present them as owner-confirmed.
 const SERVICES = [
   { id: 'skin-fade-haircut', name: 'Skin Fade (Haircut)', price: 30, priceLabel: '$30', duration: 30 },
-  // Membership as a bookable service: picking it books the member's
-  // first haircut (30 min) and joins them to the membership.
-  { id: 'membership', name: 'Membership — 3 Haircuts', price: 110, priceLabel: '$110', duration: 30 },
   { id: 'haircut-beard', name: 'Haircut & Beard', price: 45, priceLabel: '$45', duration: 45 },
   { id: 'hair-perms', name: 'Hair Perms', price: 120, priceLabel: '$120', duration: 60 },
   { id: 'mens-facial', name: "Men's Facial Treatments", price: 50, priceLabel: 'from $50', duration: 30 },
@@ -109,6 +106,7 @@ function initSqlite() {
     joined_date TEXT NOT NULL,
     next_reminder_date TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1,
+    renewal_reminder_sent INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`);
   // Migration: reminder flag for 1-day-before SMS. Tolerates DBs created
@@ -129,6 +127,12 @@ function initSqlite() {
     }
     if (!cols.includes('blocked')) {
       db.exec('ALTER TABLE bookings ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0');
+    }
+    // Migration: renewal-reminder flag on members (added with the
+    // 1-month membership expiry). Tolerates tables created before it.
+    const memberCols = db.prepare('PRAGMA table_info(members)').all().map((c) => c.name);
+    if (!memberCols.includes('renewal_reminder_sent')) {
+      db.exec('ALTER TABLE members ADD COLUMN renewal_reminder_sent INTEGER NOT NULL DEFAULT 0');
     }
   } catch (e) {
     console.warn('reminder_sent migration skipped:', e.message);
@@ -204,6 +208,7 @@ function initSqlite() {
       if (f.joinedDate !== undefined) { cols.push('joined_date = ?'); args.push(f.joinedDate); }
       if (f.nextReminderDate !== undefined) { cols.push('next_reminder_date = ?'); args.push(f.nextReminderDate); }
       if (f.active !== undefined) { cols.push('active = ?'); args.push(f.active ? 1 : 0); }
+      if (f.renewalReminderSent !== undefined) { cols.push('renewal_reminder_sent = ?'); args.push(f.renewalReminderSent ? 1 : 0); }
       if (cols.length) {
         args.push(id);
         db.prepare(`UPDATE members SET ${cols.join(', ')} WHERE id = ?`).run(...args);
@@ -270,6 +275,7 @@ async function initTurso() {
     joined_date TEXT NOT NULL,
     next_reminder_date TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1,
+    renewal_reminder_sent INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`);
   // Same reminder_sent migration as the SQLite store.
@@ -288,6 +294,11 @@ async function initTurso() {
   }
   if (!names.includes('blocked')) {
     await client.execute('ALTER TABLE bookings ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0');
+  }
+  // Same renewal-reminder migration as the SQLite store.
+  const memberCols = await client.execute('PRAGMA table_info(members)');
+  if (!memberCols.rows.map((c) => c.name).includes('renewal_reminder_sent')) {
+    await client.execute('ALTER TABLE members ADD COLUMN renewal_reminder_sent INTEGER NOT NULL DEFAULT 0');
   }
   const rowsOf = (r) => r.rows;
   return {
@@ -398,6 +409,7 @@ async function initTurso() {
       if (f.joinedDate !== undefined) { cols.push('joined_date = ?'); args.push(f.joinedDate); }
       if (f.nextReminderDate !== undefined) { cols.push('next_reminder_date = ?'); args.push(f.nextReminderDate); }
       if (f.active !== undefined) { cols.push('active = ?'); args.push(f.active ? 1 : 0); }
+      if (f.renewalReminderSent !== undefined) { cols.push('renewal_reminder_sent = ?'); args.push(f.renewalReminderSent ? 1 : 0); }
       if (cols.length) {
         args.push(id);
         await client.execute({ sql: `UPDATE members SET ${cols.join(', ')} WHERE id = ?`, args });
@@ -501,7 +513,7 @@ function initJsonFallback() {
         id: (members.reduce((mx, r) => Math.max(mx, r.id || 0), 0) + 1),
         name: m.name, phone: m.phone, email: m.email || '',
         joinedDate: m.joinedDate, nextReminderDate: m.nextReminderDate,
-        active: true, createdAt: new Date().toISOString(),
+        active: true, renewalReminderSent: false, createdAt: new Date().toISOString(),
       };
       members.push(row); flushMembers(); return row;
     },
@@ -511,6 +523,7 @@ function initJsonFallback() {
       if (f.joinedDate !== undefined) row.joinedDate = f.joinedDate;
       if (f.nextReminderDate !== undefined) row.nextReminderDate = f.nextReminderDate;
       if (f.active !== undefined) row.active = !!f.active;
+      if (f.renewalReminderSent !== undefined) row.renewalReminderSent = !!f.renewalReminderSent;
       flushMembers(); return row;
     },
     deleteMember: (id) => {
@@ -614,6 +627,7 @@ function normMember(m) {
     joinedDate: m.joined_date || m.joinedDate,
     nextReminderDate: m.next_reminder_date || m.nextReminderDate,
     active: !!(m.active ?? 1),
+    renewalReminderSent: !!(m.renewal_reminder_sent ?? m.renewalReminderSent),
     createdAt: m.created_at || m.createdAt,
   };
 }
@@ -687,7 +701,27 @@ function addDays(dateStr, n) {
 // Membership ($110 for 3 haircuts): members get a reminder text every
 // 9 days after joining, telling them to book their next haircut.
 // Reminders go ONLY to members — never to other clients.
+// A membership lasts ONE MONTH from the join date and finishes when
+// all 3 haircuts are used or the month runs out, whichever comes first.
 const MEMBERSHIP_REMINDER_DAYS = 9;
+const MEMBERSHIP_DURATION_MONTHS = 1;
+// Add calendar months to a YYYY-MM-DD date, clamping to the target
+// month's last day (Jan 31 + 1 month = Feb 28).
+function addMonths(dateStr, n) {
+  const [y, mo, d] = dateStr.split('-').map(Number);
+  const target = new Date(Date.UTC(y, mo - 1 + n, 1));
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth(), Math.min(d, lastDay))).toISOString().slice(0, 10);
+}
+function memberExpiryDate(member) { return addMonths(member.joinedDate, MEMBERSHIP_DURATION_MONTHS); }
+// Why a membership is finished: 'haircuts' (all 3 used) or 'expired'
+// (the month ran out) — null while it is still going.
+function memberFinishedReason(member, bookings, today) {
+  if (haircutsUsed(member, bookings) >= 3) return 'haircuts';
+  if ((today || todayInSalonTz()) > memberExpiryDate(member)) return 'expired';
+  return null;
+}
+function memberFinished(member, bookings, today) { return !!memberFinishedReason(member, bookings, today); }
 // Services that count as one of the member's 3 haircuts.
 const HAIRCUT_SERVICE_IDS = ['skin-fade-haircut', 'haircut-beard', 'membership'];
 // Compare phone numbers by their last 10 digits, so "+1 672-..." and
@@ -956,13 +990,12 @@ app.post('/api/bookings', async (req, res) => {
       emailNote: 'Time blocked — no customer booking, so no confirmation was sent.',
     });
   }
-  // Membership join: a client ticking "Join membership" while booking,
-  // or booking the Membership service itself, is recorded as a member
-  // (join date = today, first reminder 9 days later). A phone number
-  // that is already a member is kept as-is — no duplicate member, no
-  // restarted reminder cycle.
+  // Membership join: a client ticking "Join membership" while booking
+  // is recorded as a member (join date = today, first reminder 9 days
+  // later). A phone number that is already a member is kept as-is —
+  // no duplicate member, no restarted reminder cycle.
   let membershipJoined = false;
-  if (joinMembership || service.id === 'membership') {
+  if (joinMembership) {
     const existing = await store.findMemberByPhone(saved.phone);
     if (!existing) {
       const today = todayInSalonTz();
@@ -983,6 +1016,10 @@ app.post('/api/bookings', async (req, res) => {
   // Confirmation texts (client + owner). Fire-and-forget: the booking
   // response never waits on Twilio and never fails because of SMS.
   sendBookingSms(saved, service).catch((e) => console.error('SMS send failed:', e.message));
+  // If this booking finished the member's membership (their 3rd
+  // haircut), invite them to join the next one — fire-and-forget, so
+  // it never blocks or fails the booking response.
+  sendRenewalRemindersIfDue().catch((e) => console.error('Renewal reminder failed:', e.message));
   res.status(201).json({
     booking: saved,
     emailSent,
@@ -1136,9 +1173,15 @@ app.delete('/api/blocked-days/:date', requireAdmin, async (req, res) => {
 // Membership ($110 for 3 haircuts) — owner-only. Members are the ONLY
 // clients who get the 9-day reminder texts; other clients never do.
 app.get('/api/members', requireAdmin, async (req, res) => {
+  const today = todayInSalonTz();
   const members = await store.listMembers();
   const bookings = await store.list();
-  res.json(members.map((m) => ({ ...m, haircutsUsed: haircutsUsed(m, bookings) })));
+  res.json(members.map((m) => ({
+    ...m,
+    haircutsUsed: haircutsUsed(m, bookings),
+    expiryDate: memberExpiryDate(m),
+    finishedReason: memberFinishedReason(m, bookings, today),
+  })));
 });
 
 app.post('/api/members', requireAdmin, async (req, res) => {
@@ -1169,21 +1212,51 @@ app.post('/api/members/:id/deactivate', requireAdmin, async (req, res) => {
 });
 
 // Restart a member: a new membership cycle starting today (join date
-// today, first reminder 9 days later, haircut count restarts).
+// today, first reminder 9 days later, haircut count restarts, and the
+// renewal reminder becomes due again when this cycle finishes).
 app.post('/api/members/:id/reactivate', requireAdmin, async (req, res) => {
   const today = todayInSalonTz();
   const member = await store.updateMember(req.params.id, {
     active: true, joinedDate: today, nextReminderDate: addDays(today, MEMBERSHIP_REMINDER_DAYS),
+    renewalReminderSent: false,
   });
   if (!member) return res.status(404).json({ error: 'Member not found.' });
   res.json(member);
 });
 
+// Renewal reminder: when a membership finishes (3 haircuts used, or
+// the month ran out), the member gets ONE text inviting them to join
+// the next membership. renewalReminderSent makes sure it never
+// repeats. Called from the daily send-due job (covers month expiry)
+// and from the booking endpoint (covers the 3rd haircut finishing a
+// membership right away).
+async function sendRenewalRemindersIfDue() {
+  const today = todayInSalonTz();
+  const members = await store.listMembers();
+  const bookings = await store.list();
+  let sent = 0, failed = 0, skipped = 0;
+  for (const m of members) {
+    if (!m.active) { skipped++; continue; }
+    if (!memberFinished(m, bookings, today)) { skipped++; continue; }
+    if (m.renewalReminderSent) { skipped++; continue; }
+    if (!smsClient) { skipped++; continue; }
+    const body = `PXCUTZZ reminder: Hi ${m.name}, your membership has finished. Join your next membership — 3 haircuts for $110! Book online at pxcutzz.com or call 6725882101.`;
+    const ok = await sendSms(m.phone, body);
+    if (ok) {
+      await store.updateMember(m.id, { renewalReminderSent: true });
+      sent++;
+    } else failed++;
+  }
+  return { sent, failed, skipped };
+}
+
 // Membership reminders — every 9 days after joining, ONLY to members.
 // Admin-only; call once a day from a scheduled job. A member is due
-// when active, has used fewer than 3 haircuts, and their next reminder
-// date is today or earlier. After a text goes out, the next reminder
-// is set 9 days from today, so a repeat call never double-texts.
+// when active, not finished (3 haircuts used or the month ran out),
+// and their next reminder date is today or earlier. After a text goes
+// out, the next reminder is set 9 days from today, so a repeat call
+// never double-texts. The same call also sends the one-time renewal
+// reminder to members whose membership has finished.
 app.post('/api/members/reminders/send-due', requireAdmin, async (req, res) => {
   const today = todayInSalonTz();
   const members = await store.listMembers();
@@ -1191,7 +1264,7 @@ app.post('/api/members/reminders/send-due', requireAdmin, async (req, res) => {
   let sent = 0, failed = 0, skipped = 0;
   for (const m of members) {
     if (!m.active) { skipped++; continue; }
-    if (haircutsUsed(m, bookings) >= 3) { skipped++; continue; }
+    if (memberFinished(m, bookings, today)) { skipped++; continue; }
     if (m.nextReminderDate > today) { skipped++; continue; }
     if (!smsClient) { skipped++; continue; }
     const body = `PXCUTZZ reminder: Hi ${m.name}, it's time to book your next membership haircut! Book online at pxcutzz.com or call 6725882101.`;
@@ -1201,7 +1274,8 @@ app.post('/api/members/reminders/send-due', requireAdmin, async (req, res) => {
       sent++;
     } else failed++;
   }
-  res.json({ date: today, sent, failed, skipped, smsConfigured: !!smsClient });
+  const renewals = await sendRenewalRemindersIfDue();
+  res.json({ date: today, sent, failed, skipped, renewals: renewals.sent, renewalsFailed: renewals.failed, smsConfigured: !!smsClient });
 });
 
 // Owner booking dashboard (separate page; the Manage section on the

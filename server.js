@@ -856,6 +856,16 @@ async function sendSms(to, body) {
   }
 }
 
+// Membership welcome text: start + expiry dates, so the member knows
+// exactly how long their membership lasts. Sent when a member joins —
+// whether they join while booking or the owner adds them from the
+// dashboard. Fire-and-forget; failures are logged by sendSms.
+function sendMembershipWelcomeSms(name, phone, joinedDate) {
+  const expiry = memberExpiryDate({ joinedDate });
+  const body = `PXCUTZZ: Hi ${name}, welcome to the membership! Your membership is active from ${formatDate(joinedDate)} to ${formatDate(expiry)} — 3 haircuts for $110. Book online at pxcutzz.com or call 6725882101.`;
+  sendSms(phone, body).catch((e) => console.error('Membership welcome SMS failed:', e.message));
+}
+
 // Booking confirmation texts: one to the client, one to the owner.
 // Fire-and-forget — failures are logged by sendSms and never thrown.
 async function sendBookingSms(booking, service) {
@@ -1007,6 +1017,8 @@ app.post('/api/bookings', async (req, res) => {
         joinedDate: today, nextReminderDate: addDays(today, MEMBERSHIP_REMINDER_DAYS),
       });
       membershipJoined = true;
+      // Welcome text with the membership start + expiry dates.
+      sendMembershipWelcomeSms(saved.name, saved.phone, today);
     }
   }
   const emailSent = await sendBookingEmails(saved, service);
@@ -1199,6 +1211,9 @@ app.post('/api/members', requireAdmin, async (req, res) => {
     email: String(email || '').trim().toLowerCase(),
     joinedDate: joined, nextReminderDate: addDays(joined, MEMBERSHIP_REMINDER_DAYS),
   });
+  // Welcome text with the membership start + expiry dates (same as the
+  // booking join path). Fire-and-forget — the response never waits on it.
+  sendMembershipWelcomeSms(member.name, member.phone, member.joinedDate);
   res.status(201).json(member);
 });
 

@@ -545,7 +545,7 @@ function isValidDate(dateStr) {
   return !isNaN(d) && d.toISOString().slice(0, 10) === dateStr;
 }
 
-// Slots available for a service on a date: 30-min starts, 9 AM–9 PM.
+// Slots available for a service on a date: 15-min starts, 9 AM–9 PM.
 // A slot is offered only if the whole service finishes by 9 PM, and
 // never when it is in the past (past dates offer nothing; for today
 // only slots starting after the current time, salon timezone).
@@ -553,7 +553,7 @@ async function availableSlots(service, dateStr) {
   if (weekdayOf(dateStr) === CLOSED_WEEKDAY) return [];
   const taken = await store.listOnDate(dateStr);
   const slots = [];
-  for (let start = OPEN_MINUTES; start + service.duration <= CLOSE_MINUTES; start += 30) {
+  for (let start = OPEN_MINUTES; start + service.duration <= CLOSE_MINUTES; start += 15) {
     const end = start + service.duration;
     if (isPastSlot(dateStr, start)) continue;
     const clash = taken.some((b) => start < b.endMinutes && end > b.startMinutes);

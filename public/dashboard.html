@@ -72,6 +72,27 @@
         </div>
       </form>
 
+      <form id="editBookingForm" class="hidden" novalidate>
+        <h3>Edit booking — <span id="editNameLabel"></span></h3>
+        <input type="hidden" id="editId">
+        <label class="field-label" for="editService">Service</label>
+        <select id="editService"></select>
+        <label class="field-label" for="editDate">Date</label>
+        <input type="date" id="editDate">
+        <label class="field-label" for="editTime">Time</label>
+        <select id="editTime"></select>
+        <p class="muted" id="editTimeHint"></p>
+        <label>Client name <input type="text" id="editName" required autocomplete="off" placeholder="Client name"></label>
+        <label>Phone <input type="tel" id="editPhone" required autocomplete="off" placeholder="+1 ___-___-____"></label>
+        <label>Email <input type="email" id="editEmail" autocomplete="off" placeholder="you@example.com"></label>
+        <div id="editError" class="alert error hidden"></div>
+        <p id="editSuccess" class="alert success hidden"></p>
+        <div class="row">
+          <button type="button" class="btn" id="cancelEditBtn">Cancel</button>
+          <button type="submit" class="btn primary" id="editSubmitBtn">Save changes</button>
+        </div>
+      </form>
+
       <table class="bookings-table dash-table">
         <thead><tr><th>Time</th><th>Customer</th><th>Service</th><th>Phone</th><th></th></tr></thead>
         <tbody id="dayRows"><tr><td colspan="5" class="muted">No bookings yet.</td></tr></tbody>

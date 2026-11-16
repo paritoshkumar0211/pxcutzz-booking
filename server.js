@@ -659,8 +659,9 @@ async function sendBookingSms(booking, service) {
   const date = formatDate(booking.date);
   const clientBody = `PXCUTZZ: Your ${service.name} appointment is confirmed for ${date} at ${time}. See you at ${SALON_ADDRESS}. To change or cancel call 6725882101.`;
   await sendSms(booking.phone, clientBody);
-  const ownerBody = `PXCUTZZ booking: ${service.name} — ${date} at ${time} (${booking.name}, ${booking.phone}).`;
-  await sendSms(OWNER_PHONE, ownerBody);
+  // No SMS to the owner on bookings (removed 2026-11-16 at the owner's
+  // request): he checks the dashboard himself and wants no booking
+  // messages — no owner SMS, no chat alerts. Client texts continue.
 }
 
 // ---------------------------------------------------------------------------

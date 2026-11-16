@@ -70,7 +70,9 @@ function setupDateInput() {
   input.min = vancouverToday();
   const max = new Date(); max.setDate(max.getDate() + 60);
   input.max = max.toISOString().slice(0, 10);
-  input.value = vancouverToday();
+  // The field starts empty on purpose: picking any day (today included)
+  // fires a change, which loads the times automatically — no button
+  // needed. A pre-filled today would need a "See times" click instead.
 }
 
 async function loadSlots() {
@@ -136,13 +138,15 @@ async function submitBooking(ev) {
 }
 
 $('serviceSelect').addEventListener('change', (e) => selectService(e.target.value));
-$('toDayBtn').onclick = () => { if (!state.service) { showError('Please choose a service.'); return; } setupDateInput(); setStep(2); };
+$('toDayBtn').onclick = () => { if (!state.service) { showError('Please choose a service.'); return; } setStep(2); };
 $('backToServiceBtn').onclick = () => setStep(1);
-$('toTimeBtn').onclick = loadSlots;
-$('backToDayBtn').onclick = () => setStep(2);
+$('backToDayBtn').onclick = () => { $('dateInput').value = ''; setStep(2); };
 $('backToTimeBtn').onclick = () => setStep(3);
 $('bookingForm').addEventListener('submit', submitBooking);
-$('bookAnotherBtn').onclick = () => { $('bookingForm').reset(); setStep(1); };
-$('dateInput').addEventListener('change', () => { if (!$('stepTime').classList.contains('hidden')) loadSlots(); });
+$('bookAnotherBtn').onclick = () => { $('bookingForm').reset(); $('dateInput').value = ''; state.date = null; state.slot = null; setStep(1); };
+// Picking a day loads its times straight away — no "See times" click.
+// (The old "See times" button is gone; the change event is the trigger.)
+$('dateInput').addEventListener('change', loadSlots);
 
+setupDateInput();
 loadServices();

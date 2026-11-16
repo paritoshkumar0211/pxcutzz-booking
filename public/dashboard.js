@@ -229,6 +229,38 @@ function smsBody(b) {
   return `Hi ${b.name}! Your PXCUTZZ appointment is booked: ${b.serviceName} on ${b.date} at ${b.time}. Please arrive 5 minutes early. Need to change it? Just reply to this text. — PXCUTZZ`;
 }
 
+// Services that count as one of a member's 3 haircuts (mirrors the server).
+const HAIRCUT_SERVICE_IDS = ['skin-fade-haircut', 'haircut-beard', 'membership'];
+// Compare phone numbers by their last 10 digits (mirrors the server).
+function normalizePhone(p) {
+  const digits = String(p || '').replace(/\D/g, '');
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+// Is this booking one of the member's 3 membership haircuts? It counts
+// when the client is an active member, the service is a haircut, the
+// date is inside the membership month, and the booking is among the
+// member's first 3 such haircuts (in time order). Returns the haircut
+// number (1–3), or 0 when it is not a membership appointment.
+function membershipHaircutNumber(b) {
+  if (b.blocked || b.status === 'cancelled') return 0;
+  if (!HAIRCUT_SERVICE_IDS.includes(b.serviceId)) return 0;
+  const phone = normalizePhone(b.phone);
+  if (!phone) return 0;
+  const member = state.members.find((m) => m.active && normalizePhone(m.phone) === phone);
+  if (!member || !member.expiryDate) return 0;
+  if (b.date < member.joinedDate || b.date > member.expiryDate) return 0;
+  const haircuts = state.bookings
+    .filter((x) => !x.blocked && x.status !== 'cancelled'
+      && HAIRCUT_SERVICE_IDS.includes(x.serviceId)
+      && normalizePhone(x.phone) === phone
+      && x.date >= member.joinedDate && x.date <= member.expiryDate)
+    .sort((x, y) => (x.date === y.date
+      ? (x.startMinutes ?? 0) - (y.startMinutes ?? 0)
+      : (x.date < y.date ? -1 : 1)));
+  const idx = haircuts.findIndex((x) => x.id === b.id);
+  return idx >= 0 && idx < 3 ? idx + 1 : 0;
+}
+
 function renderDayDetail() {
   const ds = state.selectedDate;
   const rows = state.bookings
@@ -321,6 +353,17 @@ function renderDayDetail() {
         tag.textContent = b.status === 'completed' ? 'Completed' : 'Cancelled';
         tds[1].appendChild(document.createElement('br'));
         tds[1].appendChild(tag);
+      }
+      // Membership appointment: gold "Member n/3" tag under the name,
+      // so the owner sees at a glance that this is one of the member's
+      // 3 membership haircuts (and which one it is).
+      const memberNo = membershipHaircutNumber(b);
+      if (memberNo) {
+        const mtag = document.createElement('span');
+        mtag.className = 'status-tag member';
+        mtag.textContent = `Member ${memberNo}/3`;
+        tds[1].appendChild(document.createElement('br'));
+        tds[1].appendChild(mtag);
       }
     }
     // SERVICE (+ the owner's note underneath, when present).

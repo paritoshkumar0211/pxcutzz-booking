@@ -876,24 +876,17 @@ app.put('/api/bookings/:id', requireAdmin, async (req, res) => {
   res.json(publicBooking(row));
 });
 
-// Reminder texts — two windows in one call. Admin-only; call it often
-// (e.g. every 30 min from a scheduled job): the 1-day-before reminders
-// go to confirmed bookings tomorrow, and the 3-hours-before reminders
-// go to confirmed bookings today starting within the next 3 hours.
+// Reminder texts — 3-hours-before only (the 1-day-before reminder was
+// removed 2026-11-15 at the owner's request). Admin-only; call it often
+// (e.g. every 30 min from a scheduled job): the reminders go to confirmed
+// bookings today starting within the next 3 hours.
 // Idempotent: a booking is flagged only after its text succeeds, and
 // only unflagged bookings are picked up, so a repeat call never
 // double-texts anyone.
 app.post('/api/reminders/send-due', requireAdmin, async (req, res) => {
+  // 1-day-before reminders are disabled — sent/failed/skipped stay 0.
   const tomorrow = tomorrowInSalonTz();
-  const due = await store.listDueReminders(tomorrow);
   let sent = 0, failed = 0, skipped = 0;
-  for (const b of due) {
-    if (!smsClient) { skipped++; continue; }
-    const body = `PXCUTZZ reminder: your ${b.serviceName} appointment is tomorrow (${formatDate(b.date)}) at ${minutesToTime(b.startMinutes)}. See you soon! To change or cancel call 6725882101.`;
-    const ok = await sendSms(b.phone, body);
-    if (ok) { await store.markReminderSent(b.id); sent++; }
-    else failed++;
-  }
   const today = todayInSalonTz();
   const now = nowMinutesInSalonTz();
   const due3h = await store.listDue3hReminders(today, now, now + 180);

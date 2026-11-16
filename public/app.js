@@ -179,6 +179,9 @@ function onDateChange() {
 }
 $('dateInput').addEventListener('change', onDateChange);
 $('dateInput').addEventListener('input', onDateChange);
+// blur fires when a mobile date picker is dismissed (Done) — a third
+// trigger, in case that picker fires neither change nor input.
+$('dateInput').addEventListener('blur', onDateChange);
 
 setupDateInput();
 loadServices();

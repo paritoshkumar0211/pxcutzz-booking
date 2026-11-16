@@ -54,6 +54,9 @@ const OWNER_PHONE = process.env.OWNER_PHONE || '+16725882101';
 // were set to 30 minutes. Do not present them as owner-confirmed.
 const SERVICES = [
   { id: 'skin-fade-haircut', name: 'Skin Fade (Haircut)', price: 30, priceLabel: '$30', duration: 30 },
+  // Membership as a bookable service: picking it books the member's
+  // first haircut (30 min) and joins them to the membership.
+  { id: 'membership', name: 'Membership — 3 Haircuts', price: 110, priceLabel: '$110', duration: 30 },
   { id: 'haircut-beard', name: 'Haircut & Beard', price: 45, priceLabel: '$45', duration: 45 },
   { id: 'hair-perms', name: 'Hair Perms', price: 120, priceLabel: '$120', duration: 60 },
   { id: 'mens-facial', name: "Men's Facial Treatments", price: 50, priceLabel: 'from $50', duration: 30 },
@@ -686,7 +689,7 @@ function addDays(dateStr, n) {
 // Reminders go ONLY to members — never to other clients.
 const MEMBERSHIP_REMINDER_DAYS = 9;
 // Services that count as one of the member's 3 haircuts.
-const HAIRCUT_SERVICE_IDS = ['skin-fade-haircut', 'haircut-beard'];
+const HAIRCUT_SERVICE_IDS = ['skin-fade-haircut', 'haircut-beard', 'membership'];
 // Compare phone numbers by their last 10 digits, so "+1 672-..." and
 // "672-..." match the same person.
 function normalizePhone(p) {
@@ -953,12 +956,13 @@ app.post('/api/bookings', async (req, res) => {
       emailNote: 'Time blocked — no customer booking, so no confirmation was sent.',
     });
   }
-  // Membership join: a client ticking "Join membership" while booking
-  // is recorded as a member (join date = today, first reminder 9 days
-  // later). A phone number that is already a member is kept as-is —
-  // no duplicate member, no restarted reminder cycle.
+  // Membership join: a client ticking "Join membership" while booking,
+  // or booking the Membership service itself, is recorded as a member
+  // (join date = today, first reminder 9 days later). A phone number
+  // that is already a member is kept as-is — no duplicate member, no
+  // restarted reminder cycle.
   let membershipJoined = false;
-  if (joinMembership) {
+  if (joinMembership || service.id === 'membership') {
     const existing = await store.findMemberByPhone(saved.phone);
     if (!existing) {
       const today = todayInSalonTz();

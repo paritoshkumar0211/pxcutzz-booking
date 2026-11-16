@@ -107,6 +107,7 @@ function initSqlite() {
     next_reminder_date TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1,
     renewal_reminder_sent INTEGER NOT NULL DEFAULT 0,
+    prior_haircuts INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`);
   // Migration: reminder flag for 1-day-before SMS. Tolerates DBs created
@@ -133,6 +134,11 @@ function initSqlite() {
     const memberCols = db.prepare('PRAGMA table_info(members)').all().map((c) => c.name);
     if (!memberCols.includes('renewal_reminder_sent')) {
       db.exec('ALTER TABLE members ADD COLUMN renewal_reminder_sent INTEGER NOT NULL DEFAULT 0');
+    }
+    // Migration: haircuts already used before the member was added
+    // (old clients added by the owner). Same tolerance as above.
+    if (!memberCols.includes('prior_haircuts')) {
+      db.exec('ALTER TABLE members ADD COLUMN prior_haircuts INTEGER NOT NULL DEFAULT 0');
     }
   } catch (e) {
     console.warn('reminder_sent migration skipped:', e.message);
@@ -197,9 +203,9 @@ function initSqlite() {
     listMembers: () => db.prepare('SELECT * FROM members ORDER BY name').all(),
     insertMember: (m) => {
       const r = db.prepare(
-        `INSERT INTO members (name, phone, email, joined_date, next_reminder_date, active, created_at)
-         VALUES (?, ?, ?, ?, ?, 1, ?)`
-      ).run(m.name, m.phone, m.email || '', m.joinedDate, m.nextReminderDate, new Date().toISOString());
+        `INSERT INTO members (name, phone, email, joined_date, next_reminder_date, active, renewal_reminder_sent, prior_haircuts, created_at)
+         VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?)`
+      ).run(m.name, m.phone, m.email || '', m.joinedDate, m.nextReminderDate, m.priorHaircuts || 0, new Date().toISOString());
       return db.prepare('SELECT * FROM members WHERE id = ?').get(r.lastInsertRowid);
     },
     updateMember: (id, f) => {
@@ -209,6 +215,7 @@ function initSqlite() {
       if (f.nextReminderDate !== undefined) { cols.push('next_reminder_date = ?'); args.push(f.nextReminderDate); }
       if (f.active !== undefined) { cols.push('active = ?'); args.push(f.active ? 1 : 0); }
       if (f.renewalReminderSent !== undefined) { cols.push('renewal_reminder_sent = ?'); args.push(f.renewalReminderSent ? 1 : 0); }
+      if (f.priorHaircuts !== undefined) { cols.push('prior_haircuts = ?'); args.push(f.priorHaircuts); }
       if (cols.length) {
         args.push(id);
         db.prepare(`UPDATE members SET ${cols.join(', ')} WHERE id = ?`).run(...args);
@@ -276,6 +283,7 @@ async function initTurso() {
     next_reminder_date TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1,
     renewal_reminder_sent INTEGER NOT NULL DEFAULT 0,
+    prior_haircuts INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`);
   // Same reminder_sent migration as the SQLite store.
@@ -299,6 +307,10 @@ async function initTurso() {
   const memberCols = await client.execute('PRAGMA table_info(members)');
   if (!memberCols.rows.map((c) => c.name).includes('renewal_reminder_sent')) {
     await client.execute('ALTER TABLE members ADD COLUMN renewal_reminder_sent INTEGER NOT NULL DEFAULT 0');
+  }
+  // Same prior-haircuts migration as the SQLite store.
+  if (!memberCols.rows.map((c) => c.name).includes('prior_haircuts')) {
+    await client.execute('ALTER TABLE members ADD COLUMN prior_haircuts INTEGER NOT NULL DEFAULT 0');
   }
   const rowsOf = (r) => r.rows;
   return {
@@ -390,9 +402,9 @@ async function initTurso() {
     listMembers: async () => rowsOf(await client.execute('SELECT * FROM members ORDER BY name')),
     insertMember: async (m) => {
       const r = await client.execute({
-        sql: `INSERT INTO members (name, phone, email, joined_date, next_reminder_date, active, created_at)
-              VALUES (?, ?, ?, ?, ?, 1, ?)`,
-        args: [m.name, m.phone, m.email || '', m.joinedDate, m.nextReminderDate, new Date().toISOString()],
+        sql: `INSERT INTO members (name, phone, email, joined_date, next_reminder_date, active, renewal_reminder_sent, prior_haircuts, created_at)
+              VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+        args: [m.name, m.phone, m.email || '', m.joinedDate, m.nextReminderDate, m.priorHaircuts || 0, new Date().toISOString()],
       });
       let id = (r.lastInsertRowid !== undefined && r.lastInsertRowid !== null)
         ? Number(r.lastInsertRowid) : null;
@@ -410,6 +422,7 @@ async function initTurso() {
       if (f.nextReminderDate !== undefined) { cols.push('next_reminder_date = ?'); args.push(f.nextReminderDate); }
       if (f.active !== undefined) { cols.push('active = ?'); args.push(f.active ? 1 : 0); }
       if (f.renewalReminderSent !== undefined) { cols.push('renewal_reminder_sent = ?'); args.push(f.renewalReminderSent ? 1 : 0); }
+      if (f.priorHaircuts !== undefined) { cols.push('prior_haircuts = ?'); args.push(f.priorHaircuts); }
       if (cols.length) {
         args.push(id);
         await client.execute({ sql: `UPDATE members SET ${cols.join(', ')} WHERE id = ?`, args });
@@ -513,7 +526,8 @@ function initJsonFallback() {
         id: (members.reduce((mx, r) => Math.max(mx, r.id || 0), 0) + 1),
         name: m.name, phone: m.phone, email: m.email || '',
         joinedDate: m.joinedDate, nextReminderDate: m.nextReminderDate,
-        active: true, renewalReminderSent: false, createdAt: new Date().toISOString(),
+        active: true, renewalReminderSent: false, priorHaircuts: m.priorHaircuts || 0,
+        createdAt: new Date().toISOString(),
       };
       members.push(row); flushMembers(); return row;
     },
@@ -524,6 +538,7 @@ function initJsonFallback() {
       if (f.nextReminderDate !== undefined) row.nextReminderDate = f.nextReminderDate;
       if (f.active !== undefined) row.active = !!f.active;
       if (f.renewalReminderSent !== undefined) row.renewalReminderSent = !!f.renewalReminderSent;
+      if (f.priorHaircuts !== undefined) row.priorHaircuts = f.priorHaircuts;
       flushMembers(); return row;
     },
     deleteMember: (id) => {
@@ -628,6 +643,7 @@ function normMember(m) {
     nextReminderDate: m.next_reminder_date || m.nextReminderDate,
     active: !!(m.active ?? 1),
     renewalReminderSent: !!(m.renewal_reminder_sent ?? m.renewalReminderSent),
+    priorHaircuts: m.prior_haircuts ?? m.priorHaircuts ?? 0,
     createdAt: m.created_at || m.createdAt,
   };
 }
@@ -730,14 +746,17 @@ function normalizePhone(p) {
   const digits = String(p || '').replace(/\D/g, '');
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
-// Haircuts a member has used: confirmed, non-blocked bookings inside
-// the membership month (join date to expiry date), for a haircut
-// service, matched by phone. A haircut booked after the month ran out
-// is not one of the 3 — the client pays for it separately.
+// Haircuts a member has used: haircuts already done before they were
+// added to the list (old clients — walk-ins, not in the booking
+// system), plus confirmed, non-blocked bookings inside the membership
+// month (join date to expiry date), for a haircut service, matched by
+// phone. A haircut booked after the month ran out is not one of the 3
+// — the client pays for it separately.
 function haircutsUsed(member, bookings) {
+  const prior = member.priorHaircuts ?? member.prior_haircuts ?? 0;
   const phone = normalizePhone(member.phone);
-  if (!phone) return 0;
-  return bookings.filter((b) =>
+  if (!phone) return prior;
+  return prior + bookings.filter((b) =>
     normalizePhone(b.phone) === phone
     && HAIRCUT_SERVICE_IDS.includes(b.serviceId)
     && b.status !== 'cancelled' && !b.blocked
@@ -1200,16 +1219,19 @@ app.get('/api/members', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/members', requireAdmin, async (req, res) => {
-  const { name, phone, email, joinedDate } = req.body || {};
+  const { name, phone, email, joinedDate, priorHaircuts } = req.body || {};
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'Please enter the member name.' });
   if (!phone || !String(phone).trim()) return res.status(400).json({ error: 'Please enter the member phone number.' });
   const joined = isValidDate(joinedDate) ? joinedDate : todayInSalonTz();
+  // Haircuts already done before the member was added (old clients).
+  const prior = Math.min(3, Math.max(0, parseInt(priorHaircuts, 10) || 0));
   const existing = await store.findMemberByPhone(phone);
   if (existing) return res.status(409).json({ error: 'This phone number is already a member.' });
   const member = await store.insertMember({
     name: String(name).trim(), phone: String(phone).trim(),
     email: String(email || '').trim().toLowerCase(),
     joinedDate: joined, nextReminderDate: addDays(joined, MEMBERSHIP_REMINDER_DAYS),
+    priorHaircuts: prior,
   });
   // Welcome text with the membership start + expiry dates (same as the
   // booking join path). Fire-and-forget — the response never waits on it.

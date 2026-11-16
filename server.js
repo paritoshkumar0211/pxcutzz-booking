@@ -86,6 +86,7 @@ function initSqlite() {
     email_sent INTEGER NOT NULL DEFAULT 0,
     notes TEXT NOT NULL DEFAULT '',
     blocked INTEGER NOT NULL DEFAULT 0,
+    reminder_3h_sent INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`);
   db.exec(`CREATE TABLE IF NOT EXISTS blocked_days (
@@ -97,6 +98,10 @@ function initSqlite() {
     const cols = db.prepare('PRAGMA table_info(bookings)').all().map((c) => c.name);
     if (!cols.includes('reminder_sent')) {
       db.exec('ALTER TABLE bookings ADD COLUMN reminder_sent INTEGER NOT NULL DEFAULT 0');
+    }
+    // Migration: 3-hours-before reminder flag. Same tolerance as above.
+    if (!cols.includes('reminder_3h_sent')) {
+      db.exec('ALTER TABLE bookings ADD COLUMN reminder_3h_sent INTEGER NOT NULL DEFAULT 0');
     }
     // Migration: notes + blocked-slot flag ("Block this time" in the
     // owner dashboard). Same tolerance as above.
@@ -154,7 +159,7 @@ function initSqlite() {
       for (const [key, col] of Object.entries(map)) {
         if (f[key] !== undefined) { cols.push(`${col} = ?`); args.push(f[key]); }
       }
-      if (f.resetReminder) cols.push('reminder_sent = 0');
+      if (f.resetReminder) cols.push('reminder_sent = 0', 'reminder_3h_sent = 0');
       if (cols.length) {
         args.push(id);
         db.prepare(`UPDATE bookings SET ${cols.join(', ')} WHERE id = ?`).run(...args);
@@ -171,6 +176,15 @@ function initSqlite() {
     ).all(date),
     markReminderSent: (id) => {
       db.prepare('UPDATE bookings SET reminder_sent = 1 WHERE id = ?').run(id);
+    },
+    // Confirmed bookings today whose start is upcoming within (from, to]
+    // minutes from now — the 3-hours-before reminder window. Same
+    // exclusions as the 1-day reminder (cancelled, blocked, already sent).
+    listDue3hReminders: (date, fromMinutes, toMinutes) => db.prepare(
+      "SELECT * FROM bookings WHERE date = ? AND status = 'confirmed' AND COALESCE(reminder_3h_sent, 0) = 0 AND COALESCE(blocked, 0) = 0 AND start_minutes > ? AND start_minutes <= ? ORDER BY start_minutes"
+    ).all(date, fromMinutes, toMinutes),
+    markReminder3hSent: (id) => {
+      db.prepare('UPDATE bookings SET reminder_3h_sent = 1 WHERE id = ?').run(id);
     },
   };
 }
@@ -200,6 +214,7 @@ async function initTurso() {
     email_sent INTEGER NOT NULL DEFAULT 0,
     notes TEXT NOT NULL DEFAULT '',
     blocked INTEGER NOT NULL DEFAULT 0,
+    reminder_3h_sent INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`);
   await client.execute(`CREATE TABLE IF NOT EXISTS blocked_days (
@@ -210,6 +225,10 @@ async function initTurso() {
   const names = cols.rows.map((c) => c.name);
   if (!names.includes('reminder_sent')) {
     await client.execute('ALTER TABLE bookings ADD COLUMN reminder_sent INTEGER NOT NULL DEFAULT 0');
+  }
+  // Same 3-hours-before reminder migration as the SQLite store.
+  if (!names.includes('reminder_3h_sent')) {
+    await client.execute('ALTER TABLE bookings ADD COLUMN reminder_3h_sent INTEGER NOT NULL DEFAULT 0');
   }
   // Same notes/blocked migration as the SQLite store.
   if (!names.includes('notes')) {
@@ -274,7 +293,7 @@ async function initTurso() {
       for (const [key, col] of Object.entries(map)) {
         if (f[key] !== undefined) { cols.push(`${col} = ?`); args.push(f[key]); }
       }
-      if (f.resetReminder) cols.push('reminder_sent = 0');
+      if (f.resetReminder) cols.push('reminder_sent = 0', 'reminder_3h_sent = 0');
       if (cols.length) {
         args.push(id);
         await client.execute({ sql: `UPDATE bookings SET ${cols.join(', ')} WHERE id = ?`, args });
@@ -290,6 +309,15 @@ async function initTurso() {
     })),
     markReminderSent: async (id) => {
       await client.execute({ sql: 'UPDATE bookings SET reminder_sent = 1 WHERE id = ?', args: [id] });
+    },
+    // 3-hours-before window: confirmed bookings today starting within
+    // (fromMinutes, toMinutes]. Same exclusions as the 1-day reminder.
+    listDue3hReminders: async (date, fromMinutes, toMinutes) => rowsOf(await client.execute({
+      sql: "SELECT * FROM bookings WHERE date = ? AND status = 'confirmed' AND COALESCE(reminder_3h_sent, 0) = 0 AND COALESCE(blocked, 0) = 0 AND start_minutes > ? AND start_minutes <= ? ORDER BY start_minutes",
+      args: [date, fromMinutes, toMinutes],
+    })),
+    markReminder3hSent: async (id) => {
+      await client.execute({ sql: 'UPDATE bookings SET reminder_3h_sent = 1 WHERE id = ?', args: [id] });
     },
     markEmailSent: async (id) => {
       await client.execute({ sql: 'UPDATE bookings SET email_sent = 1 WHERE id = ?', args: [id] });
@@ -349,7 +377,7 @@ function initJsonFallback() {
       for (const k of ['serviceId', 'serviceName', 'date', 'startMinutes', 'endMinutes', 'name', 'phone', 'email', 'notes']) {
         if (f[k] !== undefined) row[k] = f[k];
       }
-      if (f.resetReminder) row.reminderSent = false;
+      if (f.resetReminder) { row.reminderSent = false; row.reminder3hSent = false; }
       flush(); return row;
     },
     listDueReminders: (date) => rows
@@ -358,6 +386,14 @@ function initJsonFallback() {
     markReminderSent: (id) => {
       const row = rows.find((r) => r.id === Number(id));
       if (row) { row.reminderSent = true; flush(); }
+    },
+    listDue3hReminders: (date, fromMinutes, toMinutes) => rows
+      .filter((r) => r.date === date && r.status === 'confirmed' && !r.reminder3hSent && !r.blocked
+        && (r.startMinutes ?? 0) > fromMinutes && (r.startMinutes ?? 0) <= toMinutes)
+      .sort((a, b) => (a.startMinutes ?? 0) - (b.startMinutes ?? 0)),
+    markReminder3hSent: (id) => {
+      const row = rows.find((r) => r.id === Number(id));
+      if (row) { row.reminder3hSent = true; flush(); }
     },
     markEmailSent: (id) => {
       const row = rows.find((r) => r.id === Number(id));
@@ -406,6 +442,8 @@ async function initStore() {
     update: async (id, f) => norm(await raw.update(id, f)),
     listDueReminders: async (d) => (await raw.listDueReminders(d)).map(norm),
     markReminderSent: async (id) => { await raw.markReminderSent(id); },
+    listDue3hReminders: async (d, from, to) => (await raw.listDue3hReminders(d, from, to)).map(norm),
+    markReminder3hSent: async (id) => { await raw.markReminder3hSent(id); },
     markEmailSent: async (id) => { await raw.markEmailSent(id); },
     listBlocked: async () => await raw.listBlocked(),
     isBlocked: async (d) => await raw.isBlocked(d),
@@ -839,10 +877,13 @@ app.put('/api/bookings/:id', requireAdmin, async (req, res) => {
   res.json(publicBooking(row));
 });
 
-// 1-day-before reminder texts. Admin-only; call it once a day (e.g. from
-// a scheduled job). Idempotent: a booking is flagged reminder_sent only
-// after its text succeeds, and only unflagged bookings are picked up,
-// so a second call never double-texts anyone.
+// Reminder texts — two windows in one call. Admin-only; call it often
+// (e.g. every 30 min from a scheduled job): the 1-day-before reminders
+// go to confirmed bookings tomorrow, and the 3-hours-before reminders
+// go to confirmed bookings today starting within the next 3 hours.
+// Idempotent: a booking is flagged only after its text succeeds, and
+// only unflagged bookings are picked up, so a repeat call never
+// double-texts anyone.
 app.post('/api/reminders/send-due', requireAdmin, async (req, res) => {
   const tomorrow = tomorrowInSalonTz();
   const due = await store.listDueReminders(tomorrow);
@@ -854,7 +895,18 @@ app.post('/api/reminders/send-due', requireAdmin, async (req, res) => {
     if (ok) { await store.markReminderSent(b.id); sent++; }
     else failed++;
   }
-  res.json({ date: tomorrow, sent, failed, skipped, smsConfigured: !!smsClient });
+  const today = todayInSalonTz();
+  const now = nowMinutesInSalonTz();
+  const due3h = await store.listDue3hReminders(today, now, now + 180);
+  let sent3h = 0, failed3h = 0, skipped3h = 0;
+  for (const b of due3h) {
+    if (!smsClient) { skipped3h++; continue; }
+    const body = `PXCUTZZ reminder: your ${b.serviceName} appointment is today (${formatDate(b.date)}) at ${minutesToTime(b.startMinutes)}. See you soon! To change or cancel call 6725882101.`;
+    const ok = await sendSms(b.phone, body);
+    if (ok) { await store.markReminder3hSent(b.id); sent3h++; }
+    else failed3h++;
+  }
+  res.json({ date: tomorrow, sent, failed, skipped, today, sent3h, failed3h, skipped3h, smsConfigured: !!smsClient });
 });
 
 // Send a test text to the owner to prove the SMS service works.

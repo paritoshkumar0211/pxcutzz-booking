@@ -845,12 +845,15 @@ async function sendBookingEmails(booking, service) {
   // strings; startMinutes/endMinutes are NOT present (recomputing them
   // here produced "NaN:NaN AM").
   const when = `${formatDate(booking.date)} at ${booking.time} – ${booking.endTime} (${TZ})`;
+  // Clients see the start time only (e.g. 6:00 PM, not 6:00–6:30 PM):
+  // the end time is the owner's detail, not the client's.
+  const clientWhen = `${formatDate(booking.date)} at ${booking.time} (${TZ})`;
   const gmailFrom = `"${SALON_NAME}" <${process.env.GMAIL_USER}>`;
   const clientMail = {
     from: RESEND_API_KEY ? RESEND_FROM : gmailFrom,
     to: booking.email,
     subject: `Your ${SALON_NAME} appointment is booked — ${formatDate(booking.date)}`,
-    text: `Hi ${booking.name},\n\nYour appointment at ${SALON_NAME} is booked:\n\nService: ${service.name} (${service.priceLabel})\nWhen: ${when}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nIf you need to change or cancel, please reply to this email or call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
+    text: `Hi ${booking.name},\n\nYour appointment at ${SALON_NAME} is booked:\n\nService: ${service.name} (${service.priceLabel})\nWhen: ${clientWhen}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nIf you need to change or cancel, please call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
   };
   const salonMail = {
     from: RESEND_API_KEY ? RESEND_FROM_BOOKINGS : `"${SALON_NAME} bookings" <${process.env.GMAIL_USER}>`,

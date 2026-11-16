@@ -37,6 +37,14 @@ const SALON_ADDRESS = '9385 120 St, Unit 102, Surrey, BC, Canada';
 const OPEN_MINUTES = 9 * 60; // 9:00 AM
 const CLOSE_MINUTES = 21 * 60; // 9:00 PM
 const CLOSED_WEEKDAY = 2; // Tuesday (0=Sunday)
+// Daily lunch break, every open day (added 2026-11-16 at the owner's
+// request): no booking may overlap 2:00–2:30 PM. A service may end
+// exactly at 2:00 PM or start exactly at 2:30 PM.
+const LUNCH_START_MINUTES = 14 * 60; // 2:00 PM
+const LUNCH_END_MINUTES = 14 * 60 + 30; // 2:30 PM
+function overlapsLunch(startMinutes, endMinutes) {
+  return startMinutes < LUNCH_END_MINUTES && endMinutes > LUNCH_START_MINUTES;
+}
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || ''; // if set, Manage view needs it
 // Owner's phone for booking alerts and the SMS test endpoint.
 const OWNER_PHONE = process.env.OWNER_PHONE || '+16725882101';
@@ -555,6 +563,7 @@ async function availableSlots(service, dateStr) {
   for (let start = OPEN_MINUTES; start + service.duration <= CLOSE_MINUTES; start += 15) {
     const end = start + service.duration;
     if (isPastSlot(dateStr, start)) continue;
+    if (overlapsLunch(start, end)) continue;
     const clash = taken.some((b) => start < b.endMinutes && end > b.startMinutes);
     if (!clash) slots.push({ time: minutesToTime(start), startMinutes: start, endMinutes: end });
   }
@@ -738,6 +747,9 @@ app.post('/api/bookings', async (req, res) => {
   if (startMinutes === null) return res.status(400).json({ error: 'Please choose a valid time slot.' });
   if (startMinutes < OPEN_MINUTES || startMinutes + service.duration > CLOSE_MINUTES)
     return res.status(400).json({ error: 'That time is outside opening hours (9:00 AM – 9:00 PM).' });
+  // Daily lunch break: no booking may overlap 2:00–2:30 PM.
+  if (overlapsLunch(startMinutes, startMinutes + service.duration))
+    return res.status(400).json({ error: 'The salon is on lunch break 2:00–2:30 PM. Please pick another slot.' });
   // A past slot can never be booked, even by a direct API call — the
   // slot list hides it, and this rejects it too.
   if (isPastSlot(date, startMinutes))
@@ -849,6 +861,10 @@ app.put('/api/bookings/:id', requireAdmin, async (req, res) => {
   const slotChanged = newDate !== existing.date || startMinutes !== existing.startMinutes;
   if (slotChanged && isPastSlot(newDate, startMinutes))
     return res.status(400).json({ error: 'That time has already passed. Please pick a later slot.' });
+  // Daily lunch break: a booking moved into 2:00–2:30 PM is rejected
+  // (a notes-only edit of an existing slot is left alone).
+  if (slotChanged && overlapsLunch(startMinutes, startMinutes + service.duration))
+    return res.status(400).json({ error: 'The salon is on lunch break 2:00–2:30 PM. Please pick another slot.' });
   // A blocked slot has no customer — its name/phone/email stay empty.
   const newName = existing.blocked ? existing.name : (name ?? existing.name);
   const newPhone = existing.blocked ? existing.phone : (phone ?? existing.phone);

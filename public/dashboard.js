@@ -385,35 +385,49 @@ function renderDayDetail() {
 // ---------------------------------------------------------------------------
 function renderMembers() {
   const tbody = $('memberRows');
+  // Summary line above the table: how many are still going, how many
+  // used all 3 haircuts (finished), how many were stopped by the owner.
+  const summary = $('memberSummary');
+  if (summary) {
+    const active = state.members.filter((m) => m.active && (m.haircutsUsed ?? 0) < 3).length;
+    const finished = state.members.filter((m) => m.active && (m.haircutsUsed ?? 0) >= 3).length;
+    const stopped = state.members.filter((m) => !m.active).length;
+    summary.textContent = state.members.length
+      ? `${active} active · ${finished} finished (3/3 haircuts) · ${stopped} stopped`
+      : '';
+  }
   if (!state.members.length) {
     tbody.innerHTML = '<tr><td colspan="6" class="muted">No members yet.</td></tr>';
     return;
   }
   tbody.innerHTML = '';
   state.members.forEach((m) => {
+    const used = m.haircutsUsed ?? 0;
+    const finished = m.active && used >= 3;
+    const status = !m.active ? 'Stopped' : (finished ? 'Finished' : 'Active');
     const tr = document.createElement('tr');
-    if (!m.active) tr.classList.add('row-cancelled');
+    if (!m.active || finished) tr.classList.add('row-cancelled');
     tr.innerHTML = '<td></td><td></td><td></td><td></td><td></td><td></td>';
     const tds = tr.querySelectorAll('td');
     tds[0].textContent = m.name;
-    if (!m.active) {
-      const tag = document.createElement('span');
-      tag.className = 'status-tag';
-      tag.textContent = 'Stopped';
-      tds[0].appendChild(document.createElement('br'));
-      tds[0].appendChild(tag);
-    }
+    const tag = document.createElement('span');
+    tag.className = `status-tag ${status.toLowerCase()}`;
+    tag.textContent = status;
+    tds[0].appendChild(document.createElement('br'));
+    tds[0].appendChild(tag);
     tds[1].textContent = m.phone;
     tds[2].textContent = m.joinedDate;
-    tds[3].textContent = `${m.haircutsUsed ?? 0} / 3`;
-    tds[4].textContent = (!m.active || (m.haircutsUsed ?? 0) >= 3) ? '—' : (m.nextReminderDate || '—');
+    tds[3].textContent = `${used} / 3`;
+    tds[4].textContent = (!m.active || finished) ? '—' : (m.nextReminderDate || '—');
     const actions = tds[5];
     actions.classList.add('dash-actions');
+    // A finished member's natural next step is a new cycle, so they
+    // get Reactivate (not Stop reminders) — same as a stopped member.
     const toggleBtn = document.createElement('button');
     toggleBtn.type = 'button';
     toggleBtn.className = 'row-action';
-    toggleBtn.textContent = m.active ? 'Stop reminders' : 'Reactivate';
-    toggleBtn.onclick = () => memberAction(m, m.active ? 'deactivate' : 'reactivate', toggleBtn);
+    toggleBtn.textContent = (m.active && !finished) ? 'Stop reminders' : 'Reactivate';
+    toggleBtn.onclick = () => memberAction(m, (m.active && !finished) ? 'deactivate' : 'reactivate', toggleBtn);
     actions.appendChild(toggleBtn);
     const delBtn = document.createElement('button');
     delBtn.type = 'button';

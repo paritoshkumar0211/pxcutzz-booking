@@ -249,16 +249,25 @@ function membershipHaircutNumber(b) {
   const member = state.members.find((m) => m.active && normalizePhone(m.phone) === phone);
   if (!member || !member.expiryDate) return 0;
   if (b.date < member.joinedDate || b.date > member.expiryDate) return 0;
+  // Only bookings made after the member was added count — ones already
+  // on the books are inside the "haircuts already done" number the
+  // owner typed, so this appointment has no number among the 3.
+  const since = member.createdAt || '';
+  if (since && (b.createdAt || '') < since) return 0;
   const haircuts = state.bookings
     .filter((x) => !x.blocked && x.status !== 'cancelled'
       && HAIRCUT_SERVICE_IDS.includes(x.serviceId)
       && normalizePhone(x.phone) === phone
-      && x.date >= member.joinedDate && x.date <= member.expiryDate)
+      && x.date >= member.joinedDate && x.date <= member.expiryDate
+      && (!since || (x.createdAt || '') >= since))
     .sort((x, y) => (x.date === y.date
       ? (x.startMinutes ?? 0) - (y.startMinutes ?? 0)
       : (x.date < y.date ? -1 : 1)));
   const idx = haircuts.findIndex((x) => x.id === b.id);
-  return idx >= 0 && idx < 3 ? idx + 1 : 0;
+  // The appointment's number among the 3: haircuts already done when
+  // the member was added, plus its place among the bookings since.
+  const no = (member.priorHaircuts ?? 0) + idx + 1;
+  return idx >= 0 && no <= 3 ? no : 0;
 }
 
 function renderDayDetail() {

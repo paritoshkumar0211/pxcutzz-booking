@@ -1255,6 +1255,14 @@ app.post('/api/members', requireAdmin, async (req, res) => {
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'Please enter the member name.' });
   if (!phone || !String(phone).trim()) return res.status(400).json({ error: 'Please enter the member phone number.' });
   const joined = isValidDate(joinedDate) ? joinedDate : todayInSalonTz();
+  const today = todayInSalonTz();
+  // First reminder is 9 days after joining — unless that date is
+  // already today or in the past (an old client added with a past join
+  // date), in which case it is tomorrow, so the member is reminded
+  // right away instead of the dashboard showing a past date and the
+  // catch-up send pushing their next haircut into the last 10 days.
+  const firstReminder = addDays(joined, MEMBERSHIP_REMINDER_DAYS);
+  const nextReminderDate = firstReminder > today ? firstReminder : addDays(today, 1);
   // Haircuts already done before the member was added (old clients).
   const prior = Math.min(3, Math.max(0, parseInt(priorHaircuts, 10) || 0));
   const existing = await store.findMemberByPhone(phone);
@@ -1262,7 +1270,7 @@ app.post('/api/members', requireAdmin, async (req, res) => {
   const member = await store.insertMember({
     name: String(name).trim(), phone: String(phone).trim(),
     email: String(email || '').trim().toLowerCase(),
-    joinedDate: joined, nextReminderDate: addDays(joined, MEMBERSHIP_REMINDER_DAYS),
+    joinedDate: joined, nextReminderDate,
     priorHaircuts: prior,
   });
   // Welcome text with the membership start + expiry dates (same as the
@@ -1322,13 +1330,25 @@ async function sendRenewalRemindersIfDue() {
   return { sent, failed, skipped };
 }
 
+// Next 9-day reminder on a member's own grid (join date + 9 days, +18,
+// +27 …), strictly after today. A late (catch-up) send must not push
+// the whole schedule later — e.g. a reminder due Nov 15 but sent
+// Nov 17 used to set the next one to Nov 26, shoving the member's
+// next haircut into the last 10 days of the membership month.
+function nextReminderOnGrid(joinedDate, today) {
+  let next = addDays(joinedDate, MEMBERSHIP_REMINDER_DAYS);
+  while (next <= today) next = addDays(next, MEMBERSHIP_REMINDER_DAYS);
+  return next;
+}
+
 // Membership reminders — every 9 days after joining, ONLY to members.
 // Admin-only; call once a day from a scheduled job. A member is due
 // when active, not finished (3 haircuts used or the month ran out),
 // and their next reminder date is today or earlier. After a text goes
-// out, the next reminder is set 9 days from today, so a repeat call
-// never double-texts. The same call also sends the one-time renewal
-// reminder to members whose membership has finished.
+// out, the next reminder is the next date on the member's 9-day grid
+// from their join date, so a repeat call never double-texts and a late
+// send never drifts the schedule. The same call also sends the one-time
+// renewal reminder to members whose membership has finished.
 app.post('/api/members/reminders/send-due', requireAdmin, async (req, res) => {
   const today = todayInSalonTz();
   const members = await store.listMembers();
@@ -1342,7 +1362,7 @@ app.post('/api/members/reminders/send-due', requireAdmin, async (req, res) => {
     const body = `PXCUTZZ reminder: Hi ${m.name}, it's time to book your next membership haircut! Book online at pxcutzz.com or call 6725882101.`;
     const ok = await sendSms(m.phone, body);
     if (ok) {
-      await store.updateMember(m.id, { nextReminderDate: addDays(today, MEMBERSHIP_REMINDER_DAYS) });
+      await store.updateMember(m.id, { nextReminderDate: nextReminderOnGrid(m.joinedDate, today) });
       sent++;
     } else failed++;
   }

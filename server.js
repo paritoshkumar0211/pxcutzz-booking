@@ -929,7 +929,14 @@ function sendMembershipWelcomeSms(name, phone, joinedDate) {
 // ---------------------------------------------------------------------------
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  // Booking code must never be stale on a client's phone: a cached
+  // app.js from before a fix looks like the site is broken (the date
+  // picker stops working) with no visible cause. Photos stay cached.
+  setHeaders(res, filePath) {
+    if (/\.(html|js|css)$/.test(filePath)) res.setHeader('Cache-Control', 'no-store');
+  },
+}));
 
 function publicBooking(b) {
   return {

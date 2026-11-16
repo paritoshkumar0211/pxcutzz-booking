@@ -10,9 +10,11 @@
  * free tier the local disk is ephemeral — bookings are lost on
  * redeploy/restart. See README.md for the persistent-storage options.
  *
- * Email: nodemailer over Gmail SMTP, only when GMAIL_USER and
- * GMAIL_APP_PASSWORD are set. Bookings always save even if email is
- * not configured; the API reports emailSent: false in that case.
+ * Email: Resend API when RESEND_API_KEY is set (sends from
+ * bookings@pxcutzz.com once the domain is verified in Resend), else
+ * nodemailer over Gmail SMTP when GMAIL_USER and GMAIL_APP_PASSWORD
+ * are set. Bookings always save even if email is not configured; the
+ * API reports emailSent: false in that case.
  *
  * SMS: Twilio, only when TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and
  * TWILIO_PHONE_NUMBER are all set. Booking confirmations and
@@ -810,31 +812,59 @@ if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD) {
   } catch (e) {
     console.warn('Email: nodemailer failed to initialise:', e.message);
   }
-} else {
-  console.log('Email: NOT configured (set GMAIL_USER and GMAIL_APP_PASSWORD). Bookings will still save; emailSent will be false.');
+}
+// Resend (preferred when its API key is set): sends from
+// bookings@pxcutzz.com once the domain is verified in Resend. No
+// Gmail 2-Step / app password needed.
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const RESEND_FROM = `"${SALON_NAME}" <bookings@pxcutzz.com>`;
+const RESEND_FROM_BOOKINGS = `"${SALON_NAME} bookings" <bookings@pxcutzz.com>`;
+function emailIsConfigured() { return !!mailer || !!RESEND_API_KEY; }
+if (!emailIsConfigured()) {
+  console.log('Email: NOT configured (set RESEND_API_KEY, or GMAIL_USER and GMAIL_APP_PASSWORD). Bookings will still save; emailSent will be false.');
+}
+
+// Send one email through Resend's API (built-in fetch, no extra
+// dependency). Throws on a non-2xx response so the caller can log it.
+async function sendViaResend(mail) {
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: mail.from, to: mail.to, subject: mail.subject, text: mail.text }),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Resend ${res.status}: ${errText.slice(0, 200)}`);
+  }
 }
 
 async function sendBookingEmails(booking, service) {
-  if (!mailer) return false;
+  if (!emailIsConfigured()) return false;
   // booking is the public shape: time/endTime are already formatted
   // strings; startMinutes/endMinutes are NOT present (recomputing them
   // here produced "NaN:NaN AM").
   const when = `${formatDate(booking.date)} at ${booking.time} – ${booking.endTime} (${TZ})`;
+  const gmailFrom = `"${SALON_NAME}" <${process.env.GMAIL_USER}>`;
   const clientMail = {
-    from: `"${SALON_NAME}" <${process.env.GMAIL_USER}>`,
+    from: RESEND_API_KEY ? RESEND_FROM : gmailFrom,
     to: booking.email,
     subject: `Your ${SALON_NAME} appointment is booked — ${formatDate(booking.date)}`,
     text: `Hi ${booking.name},\n\nYour appointment at ${SALON_NAME} is booked:\n\nService: ${service.name} (${service.priceLabel})\nWhen: ${when}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nIf you need to change or cancel, please reply to this email or call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
   };
   const salonMail = {
-    from: `"${SALON_NAME} bookings" <${process.env.GMAIL_USER}>`,
+    from: RESEND_API_KEY ? RESEND_FROM_BOOKINGS : `"${SALON_NAME} bookings" <${process.env.GMAIL_USER}>`,
     to: SALON_EMAIL,
     subject: `New booking: ${service.name} — ${formatDate(booking.date)} ${booking.time} (${booking.name})`,
     text: `New booking at ${SALON_NAME}:\n\nService: ${service.name} (${service.priceLabel}, ${service.duration} min)\nWhen: ${when}\nClient: ${booking.name}\nPhone: ${booking.phone}\nEmail: ${booking.email}\n\nThis booking is confirmed automatically — no action needed. You can view it in the owner dashboard at https://pxcutzz.com/dashboard.`,
   };
   try {
-    await mailer.sendMail(clientMail);
-    await mailer.sendMail(salonMail);
+    if (RESEND_API_KEY) {
+      await sendViaResend(clientMail);
+      await sendViaResend(salonMail);
+    } else {
+      await mailer.sendMail(clientMail);
+      await mailer.sendMail(salonMail);
+    }
     return true;
   } catch (e) {
     console.error('Email send failed:', e.message);
@@ -933,7 +963,7 @@ function requireAdmin(req, res, next) {
 
 app.get('/api/health', (req, res) => res.json({
   ok: true, salon: SALON_NAME, storage: store.kind,
-  emailConfigured: !!mailer, smsConfigured: !!smsClient, adminProtected: !!ADMIN_TOKEN,
+  emailConfigured: emailIsConfigured(), smsConfigured: !!smsClient, adminProtected: !!ADMIN_TOKEN,
 }));
 
 app.get('/api/info', (req, res) => res.json({
@@ -1328,6 +1358,6 @@ app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.ht
 // async) — no request can arrive before `store` is assigned.
 storeReady.then(() => {
   app.listen(PORT, () => {
-    console.log(`${SALON_NAME} booking app listening on port ${PORT} (storage: ${store.kind}, email: ${mailer ? 'configured' : 'not configured'}, sms: ${smsClient ? 'configured' : 'not configured'})`);
+    console.log(`${SALON_NAME} booking app listening on port ${PORT} (storage: ${store.kind}, email: ${emailIsConfigured() ? 'configured' : 'not configured'}, sms: ${smsClient ? 'configured' : 'not configured'})`);
   });
 });

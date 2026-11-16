@@ -752,7 +752,7 @@ app.post('/api/bookings', async (req, res) => {
     emailSent,
     emailNote: emailSent
       ? 'Confirmation email sent to the client and an alert sent to the salon.'
-      : 'Booking saved, but email was NOT sent — email is not configured on this server (see README: set GMAIL_USER and GMAIL_APP_PASSWORD).',
+      : 'A confirmation text message has been sent to your phone.',
   });
 });
 

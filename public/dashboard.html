@@ -111,6 +111,11 @@
           <label>Name <input type="text" id="addMemberName" required autocomplete="off" placeholder="Member name"></label>
           <label>Phone <input type="tel" id="addMemberPhone" required autocomplete="off" placeholder="+1 ___-___-____"></label>
         </div>
+        <div class="row">
+          <label>Joined date <input type="date" id="addMemberJoined"></label>
+          <label>Haircuts already done <input type="number" id="addMemberPrior" min="0" max="3" step="1" value="0"></label>
+        </div>
+        <p class="muted small">For old clients: set the date their membership started and how many of the 3 haircuts they already had — the count carries over.</p>
         <div id="addMemberError" class="alert error hidden"></div>
         <p id="addMemberSuccess" class="alert success hidden"></p>
         <div class="row">

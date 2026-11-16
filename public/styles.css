@@ -47,13 +47,15 @@ h2 { font-size:30px; margin-bottom:6px; }
 .steps li.done { border-color:var(--ok); color:var(--ok); font-weight:700; }
 .wizard-step { background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:22px; max-width:620px; }
 .field-label { display:block; font-weight:700; margin-bottom:8px; }
-select, input[type="date"], input[type="text"], input[type="tel"], input[type="email"], input[type="password"] { width:100%; padding:11px 12px; border:1px solid #cfc0a0; border-radius:10px; font-size:16px; margin-bottom:12px; background:#fff; }
+select, input[type="date"], input[type="text"], input[type="tel"], input[type="email"], input[type="password"], textarea { width:100%; padding:11px 12px; border:1px solid #cfc0a0; border-radius:10px; font-size:16px; margin-bottom:12px; background:#fff; font-family:inherit; }
+input:disabled, textarea:disabled { background:#f0e9d8; color:#8a7a5c; cursor:not-allowed; }
 #adminTokenInput { flex:1; margin-bottom:0; }
 form label { display:block; font-weight:600; font-size:14px; }
 .row { display:flex; gap:10px; margin-top:8px; }
 .slots { display:flex; flex-wrap:wrap; gap:10px; margin:12px 0; }
 .slot { border:1px solid #cfc0a0; background:#fff; border-radius:10px; padding:10px 14px; cursor:pointer; font-size:15px; }
 .slot:hover { border-color:var(--accent); color:var(--accent); font-weight:700; }
+.slot.selected { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:700; }
 .alert { border-radius:10px; padding:12px 14px; margin:12px 0; }
 .alert.error { background:#fef2f2; border:1px solid #fecaca; color:#991b1b; }
 .hidden { display:none; }
@@ -106,7 +108,10 @@ footer a { color:#e8ddc2; }
 .row-action:hover { border-color:var(--accent); }
 .row-action.danger { color:#991b1b; }
 .row-action:disabled { opacity:.55; cursor:not-allowed; }
-.row-done td, .row-cancelled td { opacity:.55; }
+.row-done td, .row-cancelled td, .row-blocked td { opacity:.55; }
+.booking-note { font-size:12px; color:var(--muted); margin-top:2px; }
+.block-check { display:flex; align-items:center; gap:8px; font-weight:700; font-size:14px; margin-bottom:14px; cursor:pointer; }
+.block-check input { width:auto; margin:0; padding:0; }
 .status-tag { display:inline-block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:1px 8px; margin-top:4px; }
 .time-dur { font-size:12px; color:var(--muted); margin-top:2px; }
 #addBookingForm, #editBookingForm { margin-top:18px; background:#fbf6ea; border:1px solid var(--line); border-radius:12px; padding:18px; }

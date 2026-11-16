@@ -470,6 +470,24 @@ function todayInSalonTz() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
 
+// Minutes since midnight "now" in the salon timezone. hourCycle h23
+// (not hour12:false) so midnight formats as 00, never 24.
+function nowMinutesInSalonTz() {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date());
+  const [h, m] = parts.split(':').map(Number);
+  return h * 60 + m;
+}
+
+// True when a date+start is in the past and must never be bookable or
+// shown: any past date, or today with a start at or before the current
+// time (salon timezone). Future dates are never past.
+function isPastSlot(dateStr, startMinutes) {
+  const today = todayInSalonTz();
+  if (dateStr < today) return true;
+  if (dateStr > today) return false;
+  return startMinutes <= nowMinutesInSalonTz();
+}
+
 // Tomorrow's date (YYYY-MM-DD) in the salon timezone.
 function tomorrowInSalonTz() {
   const [y, mo, d] = todayInSalonTz().split('-').map(Number);
@@ -490,21 +508,16 @@ function isValidDate(dateStr) {
 }
 
 // Slots available for a service on a date: 30-min starts, 9 AM–9 PM.
-// A slot is offered only if the whole service finishes by 9 PM, and on
-// "today" only if the slot starts in the future (Salon time).
+// A slot is offered only if the whole service finishes by 9 PM, and
+// never when it is in the past (past dates offer nothing; for today
+// only slots starting after the current time, salon timezone).
 async function availableSlots(service, dateStr) {
   if (weekdayOf(dateStr) === CLOSED_WEEKDAY) return [];
   const taken = await store.listOnDate(dateStr);
-  const nowMinutes = (() => {
-    if (dateStr !== todayInSalonTz()) return -1;
-    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
-    const [h, m] = parts.split(':').map(Number);
-    return h * 60 + m;
-  })();
   const slots = [];
   for (let start = OPEN_MINUTES; start + service.duration <= CLOSE_MINUTES; start += 30) {
     const end = start + service.duration;
-    if (start <= nowMinutes) continue;
+    if (isPastSlot(dateStr, start)) continue;
     const clash = taken.some((b) => start < b.endMinutes && end > b.startMinutes);
     if (!clash) slots.push({ time: minutesToTime(start), startMinutes: start, endMinutes: end });
   }
@@ -688,6 +701,10 @@ app.post('/api/bookings', async (req, res) => {
   if (startMinutes === null) return res.status(400).json({ error: 'Please choose a valid time slot.' });
   if (startMinutes < OPEN_MINUTES || startMinutes + service.duration > CLOSE_MINUTES)
     return res.status(400).json({ error: 'That time is outside opening hours (9:00 AM – 9:00 PM).' });
+  // A past slot can never be booked, even by a direct API call — the
+  // slot list hides it, and this rejects it too.
+  if (isPastSlot(date, startMinutes))
+    return res.status(400).json({ error: 'That time has already passed. Please pick a later slot.' });
   // A blocked slot has no customer, so name/phone/email don't apply.
   if (!isBlockedBooking) {
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'Please enter your name.' });
@@ -776,7 +793,9 @@ app.put('/api/bookings/:id', requireAdmin, async (req, res) => {
   const service = SERVICES.find((s) => s.id === (serviceId || existing.serviceId));
   if (!service) return res.status(400).json({ error: 'Please choose a service.' });
   const newDate = date || existing.date;
-  const newTime = time || existing.time;
+  // Stored rows carry startMinutes, not a formatted time string — fall
+  // back to that when the caller sends no time (e.g. a notes-only edit).
+  const newTime = time || minutesToTime(existing.startMinutes);
   if (!isValidDate(newDate) || newDate < todayInSalonTz())
     return res.status(400).json({ error: 'Please pick today or a future date.' });
   if (weekdayOf(newDate) === CLOSED_WEEKDAY)
@@ -787,6 +806,12 @@ app.put('/api/bookings/:id', requireAdmin, async (req, res) => {
   if (startMinutes === null) return res.status(400).json({ error: 'Please choose a valid time slot.' });
   if (startMinutes < OPEN_MINUTES || startMinutes + service.duration > CLOSE_MINUTES)
     return res.status(400).json({ error: 'That time is outside opening hours (9:00 AM – 9:00 PM).' });
+  // Moving a booking into a past slot is never allowed. Keeping the
+  // booking's existing slot (e.g. a notes-only edit of a booking whose
+  // time has since passed) is history, not a new booking — allowed.
+  const slotChanged = newDate !== existing.date || startMinutes !== existing.startMinutes;
+  if (slotChanged && isPastSlot(newDate, startMinutes))
+    return res.status(400).json({ error: 'That time has already passed. Please pick a later slot.' });
   // A blocked slot has no customer — its name/phone/email stay empty.
   const newName = existing.blocked ? existing.name : (name ?? existing.name);
   const newPhone = existing.blocked ? existing.phone : (phone ?? existing.phone);

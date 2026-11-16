@@ -10,10 +10,11 @@ The salon sees bookings in the **Manage** view and confirms them.
 
 ## What this app does
 
-- 11 services with the owner's prices and durations (see `server.js` `SERVICES`).
-  Durations the owner did not give (Men's Haircuts, Beard Lineup, D Tan, Scrub,
+- 9 services with the owner's prices and durations (see `server.js` `SERVICES`).
+  Durations the owner did not give (Beard Lineup, D Tan, Scrub,
   and the two price-on-request beard services) are 30-minute **placeholders** —
-  they are marked `*` on the site and `placeholderDuration: true` in the code.
+  they are marked `placeholderDuration: true` in the code (durations are hidden
+  from clients on the site; only the owner sees them in the dashboard).
   The two price-on-request services show "Price on request" and have no price.
 - Time slots 9:00 AM – 9:00 PM in 30-minute steps; a slot is offered only if
   the whole service finishes by 9:00 PM. Tuesdays show as closed.

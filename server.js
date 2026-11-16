@@ -591,7 +591,7 @@ async function sendBookingEmails(booking, service) {
     from: `"${SALON_NAME}" <${process.env.GMAIL_USER}>`,
     to: booking.email,
     subject: `Your ${SALON_NAME} appointment is booked — ${formatDate(booking.date)}`,
-    text: `Hi ${booking.name},\n\nYour appointment at ${SALON_NAME} is booked:\n\nService: ${service.name} (${service.priceLabel}, ${service.duration} min)\nWhen: ${when}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nIf you need to change or cancel, please reply to this email or call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
+    text: `Hi ${booking.name},\n\nYour appointment at ${SALON_NAME} is booked:\n\nService: ${service.name} (${service.priceLabel})\nWhen: ${when}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nIf you need to change or cancel, please reply to this email or call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
   };
   const salonMail = {
     from: `"${SALON_NAME} bookings" <${process.env.GMAIL_USER}>`,

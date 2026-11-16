@@ -83,6 +83,8 @@ function initSqlite() {
     email TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     email_sent INTEGER NOT NULL DEFAULT 0,
+    notes TEXT NOT NULL DEFAULT '',
+    blocked INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`);
   db.exec(`CREATE TABLE IF NOT EXISTS blocked_days (
@@ -94,6 +96,14 @@ function initSqlite() {
     const cols = db.prepare('PRAGMA table_info(bookings)').all().map((c) => c.name);
     if (!cols.includes('reminder_sent')) {
       db.exec('ALTER TABLE bookings ADD COLUMN reminder_sent INTEGER NOT NULL DEFAULT 0');
+    }
+    // Migration: notes + blocked-slot flag ("Block this time" in the
+    // owner dashboard). Same tolerance as above.
+    if (!cols.includes('notes')) {
+      db.exec("ALTER TABLE bookings ADD COLUMN notes TEXT NOT NULL DEFAULT ''");
+    }
+    if (!cols.includes('blocked')) {
+      db.exec('ALTER TABLE bookings ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0');
     }
   } catch (e) {
     console.warn('reminder_sent migration skipped:', e.message);
@@ -110,10 +120,11 @@ function initSqlite() {
     insert: (b) => {
       const r = db.prepare(
         `INSERT INTO bookings (service_id, service_name, date, start_minutes, end_minutes,
-          name, phone, email, status, email_sent, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?)`
+          name, phone, email, status, email_sent, created_at, notes, blocked)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?)`
       ).run(b.serviceId, b.serviceName, b.date, b.startMinutes, b.endMinutes,
-        b.name, b.phone, b.email, b.emailSent ? 1 : 0, new Date().toISOString());
+        b.name, b.phone, b.email, b.emailSent ? 1 : 0, new Date().toISOString(),
+        b.notes || '', b.blocked ? 1 : 0);
       return db.prepare('SELECT * FROM bookings WHERE id = ?').get(r.lastInsertRowid);
     },
     confirm: (id) => {
@@ -135,7 +146,7 @@ function initSqlite() {
       const map = {
         serviceId: 'service_id', serviceName: 'service_name', date: 'date',
         startMinutes: 'start_minutes', endMinutes: 'end_minutes',
-        name: 'name', phone: 'phone', email: 'email',
+        name: 'name', phone: 'phone', email: 'email', notes: 'notes',
       };
       const cols = [];
       const args = [];
@@ -153,8 +164,9 @@ function initSqlite() {
       db.prepare('UPDATE bookings SET email_sent = 1 WHERE id = ?').run(id);
     },
     // Confirmed bookings on a date whose reminder SMS has not gone out.
+    // Blocked slots are not customer bookings — they get no reminder.
     listDueReminders: (date) => db.prepare(
-      "SELECT * FROM bookings WHERE date = ? AND status = 'confirmed' AND COALESCE(reminder_sent, 0) = 0 ORDER BY start_minutes"
+      "SELECT * FROM bookings WHERE date = ? AND status = 'confirmed' AND COALESCE(reminder_sent, 0) = 0 AND COALESCE(blocked, 0) = 0 ORDER BY start_minutes"
     ).all(date),
     markReminderSent: (id) => {
       db.prepare('UPDATE bookings SET reminder_sent = 1 WHERE id = ?').run(id);
@@ -185,6 +197,8 @@ async function initTurso() {
     email TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     email_sent INTEGER NOT NULL DEFAULT 0,
+    notes TEXT NOT NULL DEFAULT '',
+    blocked INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`);
   await client.execute(`CREATE TABLE IF NOT EXISTS blocked_days (
@@ -195,6 +209,13 @@ async function initTurso() {
   const names = cols.rows.map((c) => c.name);
   if (!names.includes('reminder_sent')) {
     await client.execute('ALTER TABLE bookings ADD COLUMN reminder_sent INTEGER NOT NULL DEFAULT 0');
+  }
+  // Same notes/blocked migration as the SQLite store.
+  if (!names.includes('notes')) {
+    await client.execute("ALTER TABLE bookings ADD COLUMN notes TEXT NOT NULL DEFAULT ''");
+  }
+  if (!names.includes('blocked')) {
+    await client.execute('ALTER TABLE bookings ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0');
   }
   const rowsOf = (r) => r.rows;
   return {
@@ -209,10 +230,11 @@ async function initTurso() {
     insert: async (b) => {
       const r = await client.execute({
         sql: `INSERT INTO bookings (service_id, service_name, date, start_minutes, end_minutes,
-          name, phone, email, status, email_sent, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?)`,
+          name, phone, email, status, email_sent, created_at, notes, blocked)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?)`,
         args: [b.serviceId, b.serviceName, b.date, b.startMinutes, b.endMinutes,
-          b.name, b.phone, b.email, b.emailSent ? 1 : 0, new Date().toISOString()],
+          b.name, b.phone, b.email, b.emailSent ? 1 : 0, new Date().toISOString(),
+          b.notes || '', b.blocked ? 1 : 0],
       });
       let id = (r.lastInsertRowid !== undefined && r.lastInsertRowid !== null)
         ? Number(r.lastInsertRowid) : null;
@@ -244,7 +266,7 @@ async function initTurso() {
       const map = {
         serviceId: 'service_id', serviceName: 'service_name', date: 'date',
         startMinutes: 'start_minutes', endMinutes: 'end_minutes',
-        name: 'name', phone: 'phone', email: 'email',
+        name: 'name', phone: 'phone', email: 'email', notes: 'notes',
       };
       const cols = [];
       const args = [];
@@ -260,8 +282,9 @@ async function initTurso() {
       return row.rows[0] || null;
     },
     // Confirmed bookings on a date whose reminder SMS has not gone out.
+    // Blocked slots are not customer bookings — they get no reminder.
     listDueReminders: async (date) => rowsOf(await client.execute({
-      sql: "SELECT * FROM bookings WHERE date = ? AND status = 'confirmed' AND COALESCE(reminder_sent, 0) = 0 ORDER BY start_minutes",
+      sql: "SELECT * FROM bookings WHERE date = ? AND status = 'confirmed' AND COALESCE(reminder_sent, 0) = 0 AND COALESCE(blocked, 0) = 0 ORDER BY start_minutes",
       args: [date],
     })),
     markReminderSent: async (id) => {
@@ -299,7 +322,7 @@ function initJsonFallback() {
     list: () => [...rows].sort((a, b) => (a.date + a.startMinutes) - (b.date + b.startMinutes)),
     listOnDate: (date) => rows.filter((r) => r.date === date && r.status !== 'cancelled'),
     insert: (b) => {
-      const row = { id: (rows.reduce((m, r) => Math.max(m, r.id || 0), 0) + 1), ...b, status: 'confirmed', emailSent: !!b.emailSent, createdAt: new Date().toISOString() };
+      const row = { id: (rows.reduce((m, r) => Math.max(m, r.id || 0), 0) + 1), ...b, status: 'confirmed', emailSent: !!b.emailSent, createdAt: new Date().toISOString(), notes: b.notes || '', blocked: !!b.blocked };
       rows.push(row); flush(); return row;
     },
     confirm: (id) => {
@@ -322,14 +345,14 @@ function initJsonFallback() {
     update: (id, f) => {
       const row = rows.find((r) => r.id === Number(id));
       if (!row) return null;
-      for (const k of ['serviceId', 'serviceName', 'date', 'startMinutes', 'endMinutes', 'name', 'phone', 'email']) {
+      for (const k of ['serviceId', 'serviceName', 'date', 'startMinutes', 'endMinutes', 'name', 'phone', 'email', 'notes']) {
         if (f[k] !== undefined) row[k] = f[k];
       }
       if (f.resetReminder) row.reminderSent = false;
       flush(); return row;
     },
     listDueReminders: (date) => rows
-      .filter((r) => r.date === date && r.status === 'confirmed' && !r.reminderSent)
+      .filter((r) => r.date === date && r.status === 'confirmed' && !r.reminderSent && !r.blocked)
       .sort((a, b) => (a.startMinutes ?? 0) - (b.startMinutes ?? 0)),
     markReminderSent: (id) => {
       const row = rows.find((r) => r.id === Number(id));
@@ -405,6 +428,8 @@ function norm(b) {
     endMinutes: b.end_minutes ?? b.endMinutes,
     name: b.name, phone: b.phone, email: b.email,
     status: b.status,
+    notes: b.notes || '',
+    blocked: !!(b.blocked ?? 0),
     emailSent: !!(b.email_sent ?? b.emailSent),
     reminderSent: !!(b.reminder_sent ?? b.reminderSent),
     createdAt: b.created_at || b.createdAt,
@@ -598,6 +623,7 @@ function publicBooking(b) {
     endTime: minutesToTime(b.endMinutes),
     name: b.name, phone: b.phone, email: b.email,
     status: b.status, emailSent: !!b.emailSent,
+    notes: b.notes || '', blocked: !!b.blocked,
     reminderSent: !!b.reminderSent,
     createdAt: b.created_at || b.createdAt,
   };
@@ -637,9 +663,21 @@ app.get('/api/slots', async (req, res) => {
 });
 
 app.post('/api/bookings', async (req, res) => {
-  const { serviceId, date, time, name, phone, email } = req.body || {};
+  const { serviceId, date, time, name, phone, email, notes, blocked } = req.body || {};
   const service = SERVICES.find((s) => s.id === serviceId);
   if (!service) return res.status(400).json({ error: 'Please choose a service.' });
+  // "Block this time (no customer)" — an owner-only action. The public
+  // booking form must never be able to create a blocked slot, so a
+  // blocked request needs the same valid admin token as the other
+  // admin endpoints (requireAdmin's rule, applied inline here because
+  // this endpoint is otherwise public).
+  const isBlockedBooking = !!blocked;
+  if (isBlockedBooking && ADMIN_TOKEN) {
+    const token = req.query.token || req.headers['x-admin-token'];
+    if (token !== ADMIN_TOKEN) {
+      return res.status(401).json({ error: 'Admin token required. Set it in the Manage view.' });
+    }
+  }
   if (!isValidDate(date) || date < todayInSalonTz())
     return res.status(400).json({ error: 'Please pick today or a future date.' });
   if (weekdayOf(date) === CLOSED_WEEKDAY)
@@ -650,10 +688,14 @@ app.post('/api/bookings', async (req, res) => {
   if (startMinutes === null) return res.status(400).json({ error: 'Please choose a valid time slot.' });
   if (startMinutes < OPEN_MINUTES || startMinutes + service.duration > CLOSE_MINUTES)
     return res.status(400).json({ error: 'That time is outside opening hours (9:00 AM – 9:00 PM).' });
-  if (!name || !String(name).trim()) return res.status(400).json({ error: 'Please enter your name.' });
-  if (!phone || !String(phone).trim()) return res.status(400).json({ error: 'Please enter your phone number.' });
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim()))
-    return res.status(400).json({ error: 'Please enter a valid email address.' });
+  // A blocked slot has no customer, so name/phone/email don't apply.
+  if (!isBlockedBooking) {
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'Please enter your name.' });
+    if (!phone || !String(phone).trim()) return res.status(400).json({ error: 'Please enter your phone number.' });
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim()))
+      return res.status(400).json({ error: 'Please enter a valid email address.' });
+  }
+  const cleanNotes = String(notes || '').trim().slice(0, 500);
 
   const endMinutes = startMinutes + service.duration;
   const clash = (await store.listOnDate(date)).some((b) => startMinutes < b.endMinutes && endMinutes > b.startMinutes);
@@ -661,10 +703,23 @@ app.post('/api/bookings', async (req, res) => {
 
   const row = await store.insert({
     serviceId: service.id, serviceName: service.name, date, startMinutes, endMinutes,
-    name: String(name).trim(), phone: String(phone).trim(), email: String(email).trim().toLowerCase(),
+    name: isBlockedBooking ? '' : String(name).trim(),
+    phone: isBlockedBooking ? '' : String(phone).trim(),
+    email: isBlockedBooking ? '' : String(email).trim().toLowerCase(),
     emailSent: false,
+    notes: cleanNotes,
+    blocked: isBlockedBooking,
   });
   const saved = publicBooking(row);
+  // A blocked slot is not a customer booking: no confirmation email,
+  // no SMS — it just occupies the time.
+  if (isBlockedBooking) {
+    return res.status(201).json({
+      booking: saved,
+      emailSent: false,
+      emailNote: 'Time blocked — no customer booking, so no confirmation was sent.',
+    });
+  }
   const emailSent = await sendBookingEmails(saved, service);
   if (emailSent) {
     // best-effort flag update (works on every backend); the emails did
@@ -717,7 +772,7 @@ app.put('/api/bookings/:id', requireAdmin, async (req, res) => {
   const all = await store.list();
   const existing = all.find((b) => String(b.id) === String(req.params.id));
   if (!existing) return res.status(404).json({ error: 'Booking not found.' });
-  const { serviceId, date, time, name, phone, email } = req.body || {};
+  const { serviceId, date, time, name, phone, email, notes } = req.body || {};
   const service = SERVICES.find((s) => s.id === (serviceId || existing.serviceId));
   if (!service) return res.status(400).json({ error: 'Please choose a service.' });
   const newDate = date || existing.date;
@@ -732,13 +787,16 @@ app.put('/api/bookings/:id', requireAdmin, async (req, res) => {
   if (startMinutes === null) return res.status(400).json({ error: 'Please choose a valid time slot.' });
   if (startMinutes < OPEN_MINUTES || startMinutes + service.duration > CLOSE_MINUTES)
     return res.status(400).json({ error: 'That time is outside opening hours (9:00 AM – 9:00 PM).' });
-  const newName = name ?? existing.name;
-  const newPhone = phone ?? existing.phone;
-  const newEmail = email ?? existing.email;
-  if (!newName || !String(newName).trim()) return res.status(400).json({ error: 'Please enter your name.' });
-  if (!newPhone || !String(newPhone).trim()) return res.status(400).json({ error: 'Please enter your phone number.' });
-  if (!newEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(newEmail).trim()))
-    return res.status(400).json({ error: 'Please enter a valid email address.' });
+  // A blocked slot has no customer — its name/phone/email stay empty.
+  const newName = existing.blocked ? existing.name : (name ?? existing.name);
+  const newPhone = existing.blocked ? existing.phone : (phone ?? existing.phone);
+  const newEmail = existing.blocked ? existing.email : (email ?? existing.email);
+  if (!existing.blocked) {
+    if (!newName || !String(newName).trim()) return res.status(400).json({ error: 'Please enter your name.' });
+    if (!newPhone || !String(newPhone).trim()) return res.status(400).json({ error: 'Please enter your phone number.' });
+    if (!newEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(newEmail).trim()))
+      return res.status(400).json({ error: 'Please enter a valid email address.' });
+  }
   const endMinutes = startMinutes + service.duration;
   const clash = (await store.listOnDate(newDate)).some((b) =>
     String(b.id) !== String(existing.id) && startMinutes < b.endMinutes && endMinutes > b.startMinutes);
@@ -746,7 +804,9 @@ app.put('/api/bookings/:id', requireAdmin, async (req, res) => {
   const row = await store.update(existing.id, {
     serviceId: service.id, serviceName: service.name, date: newDate,
     startMinutes, endMinutes,
-    name: String(newName).trim(), phone: String(newPhone).trim(), email: String(newEmail).trim().toLowerCase(),
+    name: String(newName || '').trim(), phone: String(newPhone || '').trim(),
+    email: String(newEmail || '').trim().toLowerCase(),
+    notes: notes !== undefined ? String(notes).trim().slice(0, 500) : existing.notes,
     resetReminder: newDate !== existing.date,
   });
   if (!row) return res.status(404).json({ error: 'Booking not found.' });

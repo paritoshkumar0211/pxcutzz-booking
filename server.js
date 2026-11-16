@@ -51,7 +51,7 @@ const SERVICES = [
   { id: 'mens-facial', name: "Men's Facial Treatments", price: 50, priceLabel: 'from $50', duration: 30 },
   { id: 'beard-trimming-styling', name: 'Beard Trimming and Lineup', price: 20, priceLabel: '$20', duration: 30, placeholderDuration: true },
   { id: 'beard-trim-waxing', name: 'Beard Trim and Waxing', price: 25, priceLabel: '$25', duration: 30 },
-  { id: 'beard-lineup', name: 'Lineup with Straight Razor Beard', price: 10, priceLabel: '$10', duration: 30, placeholderDuration: true },
+  { id: 'beard-lineup', name: 'Beard Lineup (Straight Razor)', price: 10, priceLabel: '$10', duration: 30, placeholderDuration: true },
   { id: 'd-tan', name: 'D Tan', price: 15, priceLabel: '$15', duration: 15, placeholderDuration: true },
   { id: 'scrub', name: 'Scrub', price: 25, priceLabel: '$25', duration: 15, placeholderDuration: true },
 ];

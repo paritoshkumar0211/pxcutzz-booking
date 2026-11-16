@@ -146,7 +146,20 @@ $('bookingForm').addEventListener('submit', submitBooking);
 $('bookAnotherBtn').onclick = () => { $('bookingForm').reset(); $('dateInput').value = ''; state.date = null; state.slot = null; setStep(1); };
 // Picking a day loads its times straight away — no "See times" click.
 // (The old "See times" button is gone; the change event is the trigger.)
-$('dateInput').addEventListener('change', loadSlots);
+// Debounced, and only for today-or-later dates: typing the year
+// digit-by-digit fires change with a partial year (e.g. 0002), which
+// must not jump the flow or flash a past-date error. A tap on the
+// calendar picker fires one change, so the delay is barely noticeable.
+let dateChangeTimer = null;
+$('dateInput').addEventListener('change', () => {
+  clearTimeout(dateChangeTimer);
+  dateChangeTimer = setTimeout(() => {
+    const date = $('dateInput').value;
+    if (!date) return;
+    if (date < vancouverToday()) { showError('Please pick today or a future date.'); return; }
+    loadSlots();
+  }, 400);
+});
 
 setupDateInput();
 loadServices();

@@ -102,6 +102,26 @@
         <tbody id="dayRows"><tr><td colspan="5" class="muted">No bookings yet.</td></tr></tbody>
       </table>
     </section>
+
+    <section class="members-section" id="membersSection">
+      <h2>Members — $110 · 3 haircuts</h2>
+      <p class="muted">Members get a reminder text every 9 days to book their next haircut. Reminders go only to members, and stop after 3 haircuts. Reactivate a member to start a new cycle.</p>
+      <form id="addMemberForm" novalidate>
+        <div class="row">
+          <label>Name <input type="text" id="addMemberName" required autocomplete="off" placeholder="Member name"></label>
+          <label>Phone <input type="tel" id="addMemberPhone" required autocomplete="off" placeholder="+1 ___-___-____"></label>
+        </div>
+        <div id="addMemberError" class="alert error hidden"></div>
+        <p id="addMemberSuccess" class="alert success hidden"></p>
+        <div class="row">
+          <button type="submit" class="btn primary" id="addMemberBtn">+ Add member</button>
+        </div>
+      </form>
+      <table class="bookings-table dash-table">
+        <thead><tr><th>Member</th><th>Phone</th><th>Joined</th><th>Haircuts</th><th>Next reminder</th><th></th></tr></thead>
+        <tbody id="memberRows"><tr><td colspan="6" class="muted">No members yet.</td></tr></tbody>
+      </table>
+    </section>
   </div>
 </main>
 

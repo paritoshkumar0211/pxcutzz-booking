@@ -8,6 +8,7 @@ const state = {
   adminToken: localStorage.getItem(TOKEN_KEY) || '',
   services: [],
   bookings: [],
+  members: [],
   blocked: new Set(),
   viewYear: 0,
   viewMonth: 0,
@@ -93,19 +94,22 @@ function unlockDashboard() {
 async function loadAll() {
   showError('');
   try {
-    const [services, bookings, blocked] = await Promise.all([
+    const [services, bookings, blocked, members] = await Promise.all([
       api('/api/services'),
       api('/api/bookings'),
       api('/api/blocked-days'),
+      api('/api/members'),
     ]);
     state.services = services;
     state.bookings = bookings;
+    state.members = members;
     state.blocked = new Set(blocked.dates || []);
     $('dashContent').classList.remove('hidden');
     $('dashTokenRow').classList.add('hidden');
     fillServiceSelect();
     renderCalendar();
     renderDayDetail();
+    renderMembers();
   } catch (e) {
     if (e.message.includes('Admin token') || e.message.includes('401')) needToken();
     else showError(e.message);
@@ -374,6 +378,99 @@ function renderDayDetail() {
   // No booking at/after 2:30 PM — the lunch row goes at the end.
   if (showLunch && !lunchInserted) tbody.appendChild(lunchRow());
 }
+
+// ---------------------------------------------------------------------------
+// Members ($110 for 3 haircuts) — the only clients who get the 9-day
+// reminder texts.
+// ---------------------------------------------------------------------------
+function renderMembers() {
+  const tbody = $('memberRows');
+  if (!state.members.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="muted">No members yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = '';
+  state.members.forEach((m) => {
+    const tr = document.createElement('tr');
+    if (!m.active) tr.classList.add('row-cancelled');
+    tr.innerHTML = '<td></td><td></td><td></td><td></td><td></td><td></td>';
+    const tds = tr.querySelectorAll('td');
+    tds[0].textContent = m.name;
+    if (!m.active) {
+      const tag = document.createElement('span');
+      tag.className = 'status-tag';
+      tag.textContent = 'Stopped';
+      tds[0].appendChild(document.createElement('br'));
+      tds[0].appendChild(tag);
+    }
+    tds[1].textContent = m.phone;
+    tds[2].textContent = m.joinedDate;
+    tds[3].textContent = `${m.haircutsUsed ?? 0} / 3`;
+    tds[4].textContent = (!m.active || (m.haircutsUsed ?? 0) >= 3) ? '—' : (m.nextReminderDate || '—');
+    const actions = tds[5];
+    actions.classList.add('dash-actions');
+    const toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'row-action';
+    toggleBtn.textContent = m.active ? 'Stop reminders' : 'Reactivate';
+    toggleBtn.onclick = () => memberAction(m, m.active ? 'deactivate' : 'reactivate', toggleBtn);
+    actions.appendChild(toggleBtn);
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'row-action danger';
+    delBtn.textContent = 'Remove';
+    delBtn.onclick = () => memberAction(m, 'delete', delBtn);
+    actions.appendChild(delBtn);
+    tbody.appendChild(tr);
+  });
+}
+
+async function reloadMembers() {
+  state.members = await api('/api/members');
+  renderMembers();
+}
+
+async function memberAction(m, action, btn) {
+  if (action === 'delete' && !window.confirm(`Remove ${m.name} from the membership? Their reminders will stop.`)) return;
+  if (action === 'reactivate' && !window.confirm(`Reactivate ${m.name}? A new membership cycle starts today (join date today, first reminder in 9 days, haircut count restarts).`)) return;
+  showError('');
+  if (btn) btn.disabled = true;
+  try {
+    if (action === 'delete') await api(`/api/members/${m.id}`, { method: 'DELETE' });
+    else await api(`/api/members/${m.id}/${action}`, { method: 'POST' });
+    await reloadMembers();
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+$('addMemberForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const err = $('addMemberError');
+  const ok = $('addMemberSuccess');
+  err.classList.add('hidden'); ok.classList.add('hidden');
+  const btn = $('addMemberBtn');
+  btn.disabled = true;
+  try {
+    const name = $('addMemberName').value.trim();
+    const phone = $('addMemberPhone').value.trim();
+    if (!name) throw new Error('Please enter the member name.');
+    if (!phone) throw new Error('Please enter the member phone number.');
+    await api('/api/members', { method: 'POST', body: JSON.stringify({ name, phone }) });
+    $('addMemberName').value = '';
+    $('addMemberPhone').value = '';
+    ok.textContent = `${name} is now a member — first reminder goes in 9 days.`;
+    ok.classList.remove('hidden');
+    await reloadMembers();
+  } catch (e) {
+    err.textContent = e.message;
+    err.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // One-tap Complete, confirmed Cancel — then reload the bookings list.
 async function rowAction(b, action, btn) {

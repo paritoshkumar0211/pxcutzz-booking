@@ -45,9 +45,8 @@ const OWNER_PHONE = process.env.OWNER_PHONE || '+16725882101';
 // Durations marked "placeholder: true" were not given by the owner and
 // were set to 30 minutes. Do not present them as owner-confirmed.
 const SERVICES = [
-  { id: 'mens-haircuts', name: "Men's Haircut", price: 25, priceLabel: '$25', duration: 30, placeholderDuration: true },
+  { id: 'skin-fade-haircut', name: 'Skin Fade (Haircut)', price: 30, priceLabel: '$30', duration: 30 },
   { id: 'haircut-beard', name: 'Haircut & Beard', price: 45, priceLabel: '$45', duration: 45 },
-  { id: 'skin-fades', name: 'Skin Fades', price: 30, priceLabel: '$30', duration: 30 },
   { id: 'hair-perms', name: 'Hair Perms', price: 120, priceLabel: '$120', duration: 45 },
   { id: 'mens-facial', name: "Men's Facial Treatments", price: 50, priceLabel: 'from $50', duration: 30 },
   { id: 'beard-trimming-styling', name: 'Beard Trimming and Lineup', price: 20, priceLabel: '$20', duration: 30, placeholderDuration: true },

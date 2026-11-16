@@ -117,4 +117,15 @@ footer a { color:#e8ddc2; }
 #addBookingForm, #editBookingForm { margin-top:18px; background:#fbf6ea; border:1px solid var(--line); border-radius:12px; padding:18px; }
 #addBookingForm h3, #editBookingForm h3 { margin-top:0; }
 .alert.success { background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; }
-@media (max-width:700px) { .dash-header h1 { font-size:32px; } .cal-cell { font-size:14px; } .cal-num { top:4px; left:6px; } .cal-badge { min-width:17px; height:17px; font-size:10px; } .cal-closed { font-size:9px; bottom:2px; } .cal-nav h2 { font-size:20px; } .day-detail-head { flex-direction:column; } }
+@media (max-width:700px) {
+  /* Public site: stack the hero full-width (the "Visit us" card must not
+     squeeze into a narrow vertical strip beside the heading on phones). */
+  .hero { padding:48px 0 40px; }
+  .hero .wrap { grid-template-columns:1fr; }
+  .hero h1 { font-size:44px; }
+  .topbar-inner { flex-wrap:wrap; height:auto; padding-top:8px; padding-bottom:8px; gap:4px 10px; }
+  .topbar nav a { margin-left:12px; font-size:13px; }
+  .top-banner { font-size:14px; }
+  h2 { font-size:26px; }
+  /* Owner dashboard. */
+  .dash-header h1 { font-size:32px; } .cal-cell { font-size:14px; } .cal-num { top:4px; left:6px; } .cal-badge { min-width:17px; height:17px; font-size:10px; } .cal-closed { font-size:9px; bottom:2px; } .cal-nav h2 { font-size:20px; } .day-detail-head { flex-direction:column; } }

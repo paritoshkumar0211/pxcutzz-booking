@@ -121,7 +121,8 @@ async function submitBooking(ev) {
     const b = res.booking;
     $('confirmationText').textContent =
       `${b.name}, your ${b.serviceName} is booked for ${b.date} at ${b.time} – ${b.endTime} at PXCUTZZ, 9385 120 St, Unit 102, Surrey, BC.`;
-    $('emailNote').textContent = res.emailNote;
+    $('emailNote').textContent = res.emailNote || '';
+    $('emailNote').classList.toggle('hidden', !res.emailNote);
     setStep(5);
   } catch (e) {
     showError(e.message);

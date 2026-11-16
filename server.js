@@ -208,7 +208,7 @@ function initSqlite() {
       const r = db.prepare(
         `INSERT INTO members (name, phone, email, joined_date, next_reminder_date, active, renewal_reminder_sent, prior_haircuts, created_at)
          VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?)`
-      ).run(m.name, m.phone, m.email || '', m.joinedDate, m.nextReminderDate, m.priorHaircuts || 0, new Date().toISOString());
+      ).run(m.name, m.phone, m.email || '', m.joinedDate, m.nextReminderDate, m.priorHaircuts || 0, m.createdAt || new Date().toISOString());
       return db.prepare('SELECT * FROM members WHERE id = ?').get(r.lastInsertRowid);
     },
     updateMember: (id, f) => {
@@ -407,7 +407,7 @@ async function initTurso() {
       const r = await client.execute({
         sql: `INSERT INTO members (name, phone, email, joined_date, next_reminder_date, active, renewal_reminder_sent, prior_haircuts, created_at)
               VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?)`,
-        args: [m.name, m.phone, m.email || '', m.joinedDate, m.nextReminderDate, m.priorHaircuts || 0, new Date().toISOString()],
+        args: [m.name, m.phone, m.email || '', m.joinedDate, m.nextReminderDate, m.priorHaircuts || 0, m.createdAt || new Date().toISOString()],
       });
       let id = (r.lastInsertRowid !== undefined && r.lastInsertRowid !== null)
         ? Number(r.lastInsertRowid) : null;
@@ -530,7 +530,7 @@ function initJsonFallback() {
         name: m.name, phone: m.phone, email: m.email || '',
         joinedDate: m.joinedDate, nextReminderDate: m.nextReminderDate,
         active: true, renewalReminderSent: false, priorHaircuts: m.priorHaircuts || 0,
-        createdAt: new Date().toISOString(),
+        createdAt: m.createdAt || new Date().toISOString(),
       };
       members.push(row); flushMembers(); return row;
     },
@@ -754,17 +754,23 @@ function normalizePhone(p) {
 // system), plus confirmed, non-blocked bookings inside the membership
 // month (join date to expiry date), for a haircut service, matched by
 // phone. A haircut booked after the month ran out is not one of the 3
-// — the client pays for it separately.
+// — the client pays for it separately. A booking only counts if it was
+// made AFTER the member was added: appointments already on the books
+// when the owner adds an old client are inside the "haircuts already
+// done" number they typed — counting them again would show 3 when
+// they entered 2. (A member with no created date keeps the old count.)
 function haircutsUsed(member, bookings) {
   const prior = member.priorHaircuts ?? member.prior_haircuts ?? 0;
   const phone = normalizePhone(member.phone);
   if (!phone) return prior;
+  const since = member.createdAt || member.created_at || '';
   return prior + bookings.filter((b) =>
     normalizePhone(b.phone) === phone
     && HAIRCUT_SERVICE_IDS.includes(b.serviceId)
     && b.status !== 'cancelled' && !b.blocked
     && b.date >= member.joinedDate
     && b.date <= memberExpiryDate(member)
+    && (!since || (b.createdAt || '') >= since)
   ).length;
 }
 
@@ -1066,6 +1072,9 @@ app.post('/api/bookings', async (req, res) => {
       await store.insertMember({
         name: saved.name, phone: saved.phone, email: saved.email,
         joinedDate: today, nextReminderDate: addDays(today, MEMBERSHIP_REMINDER_DAYS),
+        // Created at the same moment as the booking, so this booking
+        // counts as the member's first haircut (see haircutsUsed).
+        createdAt: saved.createdAt,
       });
       membershipJoined = true;
       // Welcome text with the membership start + expiry dates.

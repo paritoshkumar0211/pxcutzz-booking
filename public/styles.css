@@ -100,7 +100,16 @@ footer a { color:#e8ddc2; }
 .dash-table { margin-top:16px; }
 .sms-link { display:inline-block; border:1px solid #cfc0a0; border-radius:8px; padding:4px 10px; font-size:13px; text-decoration:none; color:var(--accent); white-space:nowrap; }
 .sms-link:hover { border-color:var(--accent); }
-#addBookingForm { margin-top:18px; background:#fbf6ea; border:1px solid var(--line); border-radius:12px; padding:18px; }
-#addBookingForm h3 { margin-top:0; }
+/* Day-row actions (Edit / Complete / Cancel) and row states. */
+.dash-actions { display:flex; flex-wrap:wrap; gap:4px; align-items:center; }
+.row-action { display:inline-block; border:1px solid #cfc0a0; background:var(--surface); border-radius:8px; padding:4px 10px; font-size:13px; cursor:pointer; color:var(--ink); white-space:nowrap; }
+.row-action:hover { border-color:var(--accent); }
+.row-action.danger { color:#991b1b; }
+.row-action:disabled { opacity:.55; cursor:not-allowed; }
+.row-done td, .row-cancelled td { opacity:.55; }
+.status-tag { display:inline-block; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:1px 8px; margin-top:4px; }
+.time-dur { font-size:12px; color:var(--muted); margin-top:2px; }
+#addBookingForm, #editBookingForm { margin-top:18px; background:#fbf6ea; border:1px solid var(--line); border-radius:12px; padding:18px; }
+#addBookingForm h3, #editBookingForm h3 { margin-top:0; }
 .alert.success { background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; }
 @media (max-width:700px) { .dash-header h1 { font-size:32px; } .cal-cell { font-size:14px; } .cal-num { top:4px; left:6px; } .cal-badge { min-width:17px; height:17px; font-size:10px; } .cal-closed { font-size:9px; bottom:2px; } .cal-nav h2 { font-size:20px; } .day-detail-head { flex-direction:column; } }

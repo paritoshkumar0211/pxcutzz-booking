@@ -82,22 +82,28 @@ async function loadAll() {
 }
 
 function fillServiceSelect() {
-  const sel = $('addService');
-  sel.innerHTML = '';
-  state.services.forEach((s) => {
-    const opt = document.createElement('option');
-    opt.value = s.id;
-    opt.textContent = `${s.name} — ${s.priceLabel} (${s.duration} min)`;
-    sel.appendChild(opt);
+  [$('addService'), $('editService')].forEach((sel) => {
+    sel.innerHTML = '';
+    state.services.forEach((s) => {
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      opt.textContent = `${s.name} — ${s.priceLabel} (${s.duration} min)`;
+      sel.appendChild(opt);
+    });
   });
 }
 
 // ---------------------------------------------------------------------------
 // Calendar
 // ---------------------------------------------------------------------------
+// Calendar badges count active bookings only (cancelled excluded,
+// completed still counted).
 function countsByDate() {
   const counts = {};
-  state.bookings.forEach((b) => { counts[b.date] = (counts[b.date] || 0) + 1; });
+  state.bookings.forEach((b) => {
+    if (b.status === 'cancelled') return;
+    counts[b.date] = (counts[b.date] || 0) + 1;
+  });
   return counts;
 }
 
@@ -192,16 +198,19 @@ function renderDayDetail() {
   const ds = state.selectedDate;
   const rows = state.bookings
     .filter((b) => b.date === ds)
-    .sort((a, b) => (a.time < b.time ? -1 : 1));
+    .sort((a, b) => (a.startMinutes ?? 0) - (b.startMinutes ?? 0));
   const isTuesday = weekdayOf(ds) === CLOSED_WEEKDAY;
   const isBlocked = state.blocked.has(ds);
+  // Day count counts active bookings only (cancelled excluded,
+  // completed still counted).
+  const activeCount = rows.filter((b) => b.status !== 'cancelled').length;
 
   $('dayTitle').textContent = formatDay(ds);
   $('dayCount').textContent = isTuesday
     ? 'Closed — the salon is closed on Tuesdays.'
     : isBlocked
-      ? `Blocked by the owner · ${rows.length} booking${rows.length === 1 ? '' : 's'}`
-      : `${rows.length} booking${rows.length === 1 ? '' : 's'}`;
+      ? `Blocked by the owner · ${activeCount} booking${activeCount === 1 ? '' : 's'}`
+      : `${activeCount} booking${activeCount === 1 ? '' : 's'}`;
 
   const blockBtn = $('blockDayBtn');
   if (isTuesday) {
@@ -220,19 +229,82 @@ function renderDayDetail() {
   tbody.innerHTML = '';
   rows.forEach((b) => {
     const tr = document.createElement('tr');
+    if (b.status === 'completed') tr.classList.add('row-done');
+    if (b.status === 'cancelled') tr.classList.add('row-cancelled');
     tr.innerHTML = '<td></td><td></td><td></td><td></td><td></td>';
     const tds = tr.querySelectorAll('td');
-    tds[0].textContent = `${b.time} – ${b.endTime}`;
+    // TIME: start time, with the service duration beneath it.
+    const timeEl = document.createElement('div');
+    timeEl.textContent = b.time;
+    tds[0].appendChild(timeEl);
+    const svc = state.services.find((s) => s.id === b.serviceId);
+    if (svc) {
+      const dur = document.createElement('div');
+      dur.className = 'time-dur';
+      dur.textContent = `${svc.duration} min`;
+      tds[0].appendChild(dur);
+    }
+    // CUSTOMER (+ status tag for completed/cancelled rows).
     tds[1].textContent = b.name;
+    if (b.status === 'completed' || b.status === 'cancelled') {
+      const tag = document.createElement('span');
+      tag.className = 'status-tag';
+      tag.textContent = b.status === 'completed' ? 'Completed' : 'Cancelled';
+      tds[1].appendChild(document.createElement('br'));
+      tds[1].appendChild(tag);
+    }
     tds[2].textContent = b.serviceName;
     tds[3].textContent = b.phone;
-    const sms = document.createElement('a');
-    sms.className = 'sms-link';
-    sms.textContent = 'Send SMS';
-    sms.href = `sms:${encodeURIComponent(b.phone)}?&body=${encodeURIComponent(smsBody(b))}`;
-    tds[4].appendChild(sms);
+    // ACTIONS: Send SMS + Edit / Complete / Cancel. Cancelled rows
+    // show no actions at all; completed rows lose the Complete button.
+    const actions = tds[4];
+    actions.classList.add('dash-actions');
+    if (b.status !== 'cancelled') {
+      const sms = document.createElement('a');
+      sms.className = 'sms-link';
+      sms.textContent = 'Send SMS';
+      sms.href = `sms:${encodeURIComponent(b.phone)}?&body=${encodeURIComponent(smsBody(b))}`;
+      actions.appendChild(sms);
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'row-action';
+      editBtn.textContent = 'Edit';
+      editBtn.onclick = () => showEditForm(b);
+      actions.appendChild(editBtn);
+      if (b.status !== 'completed') {
+        const doneBtn = document.createElement('button');
+        doneBtn.type = 'button';
+        doneBtn.className = 'row-action';
+        doneBtn.textContent = 'Complete';
+        doneBtn.onclick = () => rowAction(b, 'complete', doneBtn);
+        actions.appendChild(doneBtn);
+      }
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'row-action danger';
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.onclick = () => rowAction(b, 'cancel', cancelBtn);
+      actions.appendChild(cancelBtn);
+    }
     tbody.appendChild(tr);
   });
+}
+
+// One-tap Complete, confirmed Cancel — then reload the bookings list.
+async function rowAction(b, action, btn) {
+  if (action === 'cancel' && !window.confirm(`Cancel ${b.name}'s ${b.serviceName} booking on ${b.date} at ${b.time}? The time slot will be freed.`)) return;
+  showError('');
+  if (btn) btn.disabled = true;
+  try {
+    await api(`/api/bookings/${b.id}/${action}`, { method: 'POST' });
+    state.bookings = await api('/api/bookings');
+    renderCalendar();
+    renderDayDetail();
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function toggleBlockDay() {
@@ -259,6 +331,7 @@ function hideAddForm() {
   $('addSuccess').classList.add('hidden');
   $('addError').classList.add('hidden');
   $('addBookingBtn').classList.remove('hidden');
+  hideEditForm();
 }
 
 async function loadAddSlots() {
@@ -286,6 +359,7 @@ async function loadAddSlots() {
 }
 
 function showAddForm() {
+  hideEditForm();
   $('addDateLabel').textContent = formatDay(state.selectedDate);
   $('addBookingForm').classList.remove('hidden');
   $('addSuccess').classList.add('hidden');
@@ -339,6 +413,104 @@ async function submitAddBooking(ev) {
 }
 
 // ---------------------------------------------------------------------------
+// Edit booking
+// ---------------------------------------------------------------------------
+function hideEditForm() {
+  $('editBookingForm').classList.add('hidden');
+  $('editSuccess').classList.add('hidden');
+  $('editError').classList.add('hidden');
+}
+
+async function loadEditSlots() {
+  const id = $('editId').value;
+  const original = state.bookings.find((b) => String(b.id) === String(id));
+  const serviceId = $('editService').value;
+  const date = $('editDate').value;
+  const hint = $('editTimeHint');
+  const sel = $('editTime');
+  const prev = sel.value;
+  sel.innerHTML = '';
+  hint.textContent = 'Loading times…';
+  try {
+    const data = await api(`/api/slots?date=${encodeURIComponent(date)}&serviceId=${encodeURIComponent(serviceId)}`);
+    hint.textContent = (data.closed || data.slots.length === 0) ? (data.message || 'No times available on that day.') : '';
+    const times = data.slots.map((s) => s.time);
+    // Keep the booking's current time selectable when the date and
+    // service are unchanged — /api/slots excludes it as "taken".
+    if (original && original.date === date && original.serviceId === serviceId && !times.includes(original.time)) {
+      times.unshift(original.time);
+    }
+    times.forEach((t) => {
+      const opt = document.createElement('option');
+      opt.value = t;
+      opt.textContent = t;
+      sel.appendChild(opt);
+    });
+    if (prev && times.includes(prev)) sel.value = prev;
+    else if (original && original.date === date && original.serviceId === serviceId) sel.value = original.time;
+  } catch (e) {
+    hint.textContent = e.message;
+  }
+}
+
+function showEditForm(b) {
+  hideAddForm();
+  $('editId').value = b.id;
+  $('editNameLabel').textContent = b.name;
+  $('editService').value = b.serviceId;
+  $('editDate').value = b.date;
+  $('editName').value = b.name;
+  $('editPhone').value = b.phone;
+  // Owner-added bookings without an email store a placeholder; show it
+  // as blank and restore the placeholder on save if still blank.
+  $('editEmail').value = b.email === 'no-email@pxcutzz.local' ? '' : b.email;
+  $('editBookingForm').classList.remove('hidden');
+  $('editSuccess').classList.add('hidden');
+  $('editError').classList.add('hidden');
+  loadEditSlots();
+  $('editBookingForm').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function submitEditBooking(ev) {
+  ev.preventDefault();
+  const err = $('editError');
+  const ok = $('editSuccess');
+  err.classList.add('hidden');
+  ok.classList.add('hidden');
+  const btn = $('editSubmitBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    const updated = await api(`/api/bookings/${$('editId').value}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        serviceId: $('editService').value,
+        date: $('editDate').value,
+        time: $('editTime').value,
+        name: $('editName').value.trim(),
+        phone: $('editPhone').value.trim(),
+        email: $('editEmail').value.trim() || 'no-email@pxcutzz.local',
+      }),
+    });
+    state.bookings = await api('/api/bookings');
+    // If the booking moved to another day, jump the view to that day.
+    state.selectedDate = updated.date;
+    const [y, m] = updated.date.split('-').map(Number);
+    state.viewYear = y;
+    state.viewMonth = m - 1;
+    hideEditForm();
+    renderCalendar();
+    renderDayDetail();
+  } catch (e) {
+    err.textContent = e.message;
+    err.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save changes';
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
 const today = vancouverToday();
@@ -354,6 +526,10 @@ $('addBookingBtn').onclick = showAddForm;
 $('cancelAddBtn').onclick = hideAddForm;
 $('addBookingForm').addEventListener('submit', submitAddBooking);
 $('addService').addEventListener('change', loadAddSlots);
+$('cancelEditBtn').onclick = hideEditForm;
+$('editBookingForm').addEventListener('submit', submitEditBooking);
+$('editService').addEventListener('change', loadEditSlots);
+$('editDate').addEventListener('change', loadEditSlots);
 $('dashUnlockBtn').onclick = unlockDashboard;
 $('dashTokenInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') unlockDashboard(); });
 

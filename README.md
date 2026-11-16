@@ -11,7 +11,7 @@ The salon sees bookings in the **Manage** view and confirms them.
 ## What this app does
 
 - 9 services with the owner's prices and durations (see `server.js` `SERVICES`).
-  Durations the owner did not give (Beard Lineup, D Tan, Scrub,
+  Durations the owner did not give (Beard Lineup (Straight Razor), D Tan, Scrub,
   and the two price-on-request beard services) are 30-minute **placeholders** —
   they are marked `placeholderDuration: true` in the code (durations are hidden
   from clients on the site; only the owner sees them in the dashboard).

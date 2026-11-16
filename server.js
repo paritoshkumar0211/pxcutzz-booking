@@ -730,8 +730,10 @@ function normalizePhone(p) {
   const digits = String(p || '').replace(/\D/g, '');
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
-// Haircuts a member has used: confirmed, non-blocked bookings on/after
-// their join date, for a haircut service, matched by phone.
+// Haircuts a member has used: confirmed, non-blocked bookings inside
+// the membership month (join date to expiry date), for a haircut
+// service, matched by phone. A haircut booked after the month ran out
+// is not one of the 3 — the client pays for it separately.
 function haircutsUsed(member, bookings) {
   const phone = normalizePhone(member.phone);
   if (!phone) return 0;
@@ -740,6 +742,7 @@ function haircutsUsed(member, bookings) {
     && HAIRCUT_SERVICE_IDS.includes(b.serviceId)
     && b.status !== 'cancelled' && !b.blocked
     && b.date >= member.joinedDate
+    && b.date <= memberExpiryDate(member)
   ).length;
 }
 

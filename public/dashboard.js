@@ -29,6 +29,35 @@ function dateStrOf(y, m, d) {
   return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
+// Minutes since midnight "now" in the salon timezone.
+function nowMinutesVancouver() {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date());
+  const [h, m] = parts.split(':').map(Number);
+  return h * 60 + m;
+}
+
+// "9:00 AM" -> minutes since midnight (null when unparsable).
+function timeStrToMinutes(t) {
+  const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec((t || '').trim());
+  if (!m) return null;
+  let h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h < 1 || h > 12 || min > 59) return null;
+  if (/pm/i.test(m[3]) && h !== 12) h += 12;
+  if (/am/i.test(m[3]) && h === 12) h = 0;
+  return h * 60 + min;
+}
+
+// True when a date+time is a past slot (past date, or today at/before
+// now, salon timezone). Past slots are never shown in the slot grids.
+function isPastSlot(dateStr, timeStr) {
+  const today = vancouverToday();
+  if (dateStr < today) return true;
+  if (dateStr > today) return false;
+  const mins = timeStrToMinutes(timeStr);
+  return mins === null ? true : mins <= nowMinutesVancouver();
+}
+
 function showError(msg) {
   const el = $('dashError');
   if (!msg) { el.classList.add('hidden'); el.textContent = ''; return; }
@@ -521,8 +550,10 @@ async function loadEditSlots() {
     hint.textContent = (data.closed || data.slots.length === 0) ? (data.message || 'No times available on that day.') : '';
     const times = data.slots.map((s) => s.time);
     // Keep the booking's current time selectable when the date and
-    // service are unchanged — /api/slots excludes it as "taken".
-    if (original && original.date === date && original.serviceId === serviceId && !times.includes(original.time)) {
+    // service are unchanged — /api/slots excludes it as "taken" — but
+    // never when that time is already past (past slots are never shown).
+    if (original && original.date === date && original.serviceId === serviceId
+      && !times.includes(original.time) && !isPastSlot(date, original.time)) {
       times.unshift(original.time);
     }
     if (!times.includes(state.editSelectedTime)) state.editSelectedTime = null;

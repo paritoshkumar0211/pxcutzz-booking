@@ -113,6 +113,9 @@ footer a { color:#e8ddc2; }
 .row-action:disabled { opacity:.55; cursor:not-allowed; }
 .row-done td, .row-cancelled td, .row-blocked td { opacity:.55; }
 .row-lunch td { background:#f3ead2; font-style:italic; }
+.members-section { margin-top:36px; }
+.member-join { display:flex; gap:8px; align-items:flex-start; margin:14px 0 2px; font-weight:600; }
+.member-join input { margin-top:3px; }
 .booking-note { font-size:12px; color:var(--muted); margin-top:2px; }
 .block-check { display:flex; align-items:center; gap:8px; font-weight:700; font-size:14px; margin-bottom:14px; cursor:pointer; }
 .block-check input { width:auto; margin:0; padding:0; }

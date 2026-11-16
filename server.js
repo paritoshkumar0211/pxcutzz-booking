@@ -55,6 +55,7 @@ const SERVICES = [
   { id: 'beard-lineup', name: 'Lineup with Straight Razor Beard', price: 10, priceLabel: '$10', duration: 30, placeholderDuration: true },
   { id: 'd-tan', name: 'D Tan', price: 15, priceLabel: '$15', duration: 30, placeholderDuration: true },
   { id: 'scrub', name: 'Scrub', price: 25, priceLabel: '$25', duration: 30, placeholderDuration: true },
+  { id: 'chuppa', name: 'Chuppa Unlimited', price: 100, priceLabel: '$100', duration: 30 },
 ];
 
 const OPENING_HOURS = { open: '9:00 AM', close: '9:00 PM', closedDay: 'Tuesday' };

@@ -98,6 +98,16 @@ function initSqlite() {
   db.exec(`CREATE TABLE IF NOT EXISTS blocked_days (
     date TEXT PRIMARY KEY
   )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    email TEXT NOT NULL DEFAULT '',
+    joined_date TEXT NOT NULL,
+    next_reminder_date TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+  )`);
   // Migration: reminder flag for 1-day-before SMS. Tolerates DBs created
   // before this column existed (ALTER fails harmlessly if present).
   try {
@@ -175,6 +185,29 @@ function initSqlite() {
     markEmailSent: (id) => {
       db.prepare('UPDATE bookings SET email_sent = 1 WHERE id = ?').run(id);
     },
+    // Members ($110 for 3 haircuts) — the only clients who get the
+    // 9-day reminder texts.
+    listMembers: () => db.prepare('SELECT * FROM members ORDER BY name').all(),
+    insertMember: (m) => {
+      const r = db.prepare(
+        `INSERT INTO members (name, phone, email, joined_date, next_reminder_date, active, created_at)
+         VALUES (?, ?, ?, ?, ?, 1, ?)`
+      ).run(m.name, m.phone, m.email || '', m.joinedDate, m.nextReminderDate, new Date().toISOString());
+      return db.prepare('SELECT * FROM members WHERE id = ?').get(r.lastInsertRowid);
+    },
+    updateMember: (id, f) => {
+      const cols = [];
+      const args = [];
+      if (f.joinedDate !== undefined) { cols.push('joined_date = ?'); args.push(f.joinedDate); }
+      if (f.nextReminderDate !== undefined) { cols.push('next_reminder_date = ?'); args.push(f.nextReminderDate); }
+      if (f.active !== undefined) { cols.push('active = ?'); args.push(f.active ? 1 : 0); }
+      if (cols.length) {
+        args.push(id);
+        db.prepare(`UPDATE members SET ${cols.join(', ')} WHERE id = ?`).run(...args);
+      }
+      return db.prepare('SELECT * FROM members WHERE id = ?').get(id) || null;
+    },
+    deleteMember: (id) => { db.prepare('DELETE FROM members WHERE id = ?').run(id); },
     // Confirmed bookings on a date whose reminder SMS has not gone out.
     // Blocked slots are not customer bookings — they get no reminder.
     listDueReminders: (date) => db.prepare(
@@ -225,6 +258,16 @@ async function initTurso() {
   )`);
   await client.execute(`CREATE TABLE IF NOT EXISTS blocked_days (
     date TEXT PRIMARY KEY
+  )`);
+  await client.execute(`CREATE TABLE IF NOT EXISTS members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    email TEXT NOT NULL DEFAULT '',
+    joined_date TEXT NOT NULL,
+    next_reminder_date TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
   )`);
   // Same reminder_sent migration as the SQLite store.
   const cols = await client.execute('PRAGMA table_info(bookings)');
@@ -328,6 +371,40 @@ async function initTurso() {
     markEmailSent: async (id) => {
       await client.execute({ sql: 'UPDATE bookings SET email_sent = 1 WHERE id = ?', args: [id] });
     },
+    // Members ($110 for 3 haircuts) — the only clients who get the
+    // 9-day reminder texts.
+    listMembers: async () => rowsOf(await client.execute('SELECT * FROM members ORDER BY name')),
+    insertMember: async (m) => {
+      const r = await client.execute({
+        sql: `INSERT INTO members (name, phone, email, joined_date, next_reminder_date, active, created_at)
+              VALUES (?, ?, ?, ?, ?, 1, ?)`,
+        args: [m.name, m.phone, m.email || '', m.joinedDate, m.nextReminderDate, new Date().toISOString()],
+      });
+      let id = (r.lastInsertRowid !== undefined && r.lastInsertRowid !== null)
+        ? Number(r.lastInsertRowid) : null;
+      if (id === null) {
+        const maxRow = await client.execute('SELECT MAX(id) AS max_id FROM members');
+        id = Number(maxRow.rows[0].max_id);
+      }
+      const row = await client.execute({ sql: 'SELECT * FROM members WHERE id = ?', args: [id] });
+      return row.rows[0];
+    },
+    updateMember: async (id, f) => {
+      const cols = [];
+      const args = [];
+      if (f.joinedDate !== undefined) { cols.push('joined_date = ?'); args.push(f.joinedDate); }
+      if (f.nextReminderDate !== undefined) { cols.push('next_reminder_date = ?'); args.push(f.nextReminderDate); }
+      if (f.active !== undefined) { cols.push('active = ?'); args.push(f.active ? 1 : 0); }
+      if (cols.length) {
+        args.push(id);
+        await client.execute({ sql: `UPDATE members SET ${cols.join(', ')} WHERE id = ?`, args });
+      }
+      const row = await client.execute({ sql: 'SELECT * FROM members WHERE id = ?', args: [id] });
+      return row.rows[0] || null;
+    },
+    deleteMember: async (id) => {
+      await client.execute({ sql: 'DELETE FROM members WHERE id = ?', args: [id] });
+    },
   };
 }
 
@@ -348,6 +425,14 @@ function initJsonFallback() {
     if (!Array.isArray(blocked)) blocked = [];
   } catch (_) { blocked = []; }
   const flushBlocked = () => { try { fs.writeFileSync(blockedFile, JSON.stringify(blocked, null, 2)); } catch (_) { /* in-memory only */ } };
+  // Members ($110 for 3 haircuts) — separate JSON file, same pattern.
+  const membersFile = path.join(DATA_DIR, 'members.json');
+  let members = [];
+  try {
+    if (fs.existsSync(membersFile)) members = JSON.parse(fs.readFileSync(membersFile, 'utf8'));
+    if (!Array.isArray(members)) members = [];
+  } catch (_) { members = []; }
+  const flushMembers = () => { try { fs.writeFileSync(membersFile, JSON.stringify(members, null, 2)); } catch (_) { /* in-memory only */ } };
   return {
     kind: 'json',
     listBlocked: () => [...blocked].sort(),
@@ -405,6 +490,30 @@ function initJsonFallback() {
       const row = rows.find((r) => r.id === Number(id));
       if (row) { row.emailSent = true; flush(); }
     },
+    // Members ($110 for 3 haircuts) — the only clients who get the
+    // 9-day reminder texts.
+    listMembers: () => [...members].sort((a, b) => String(a.name).localeCompare(String(b.name))),
+    insertMember: (m) => {
+      const row = {
+        id: (members.reduce((mx, r) => Math.max(mx, r.id || 0), 0) + 1),
+        name: m.name, phone: m.phone, email: m.email || '',
+        joinedDate: m.joinedDate, nextReminderDate: m.nextReminderDate,
+        active: true, createdAt: new Date().toISOString(),
+      };
+      members.push(row); flushMembers(); return row;
+    },
+    updateMember: (id, f) => {
+      const row = members.find((r) => r.id === Number(id));
+      if (!row) return null;
+      if (f.joinedDate !== undefined) row.joinedDate = f.joinedDate;
+      if (f.nextReminderDate !== undefined) row.nextReminderDate = f.nextReminderDate;
+      if (f.active !== undefined) row.active = !!f.active;
+      flushMembers(); return row;
+    },
+    deleteMember: (id) => {
+      members = members.filter((r) => r.id !== Number(id));
+      flushMembers();
+    },
   };
 }
 
@@ -455,6 +564,17 @@ async function initStore() {
     isBlocked: async (d) => await raw.isBlocked(d),
     block: async (d) => { await raw.block(d); },
     unblock: async (d) => { await raw.unblock(d); },
+    listMembers: async () => (await raw.listMembers()).map(normMember),
+    // Find a member by phone, matching on the last 10 digits so
+    // "+1 672-..." and "672-..." are the same person.
+    findMemberByPhone: async (phone) => {
+      const want = normalizePhone(phone);
+      const all = await raw.listMembers();
+      return normMember(all.find((m) => normalizePhone(m.phone) === want)) || null;
+    },
+    insertMember: async (m) => normMember(await raw.insertMember(m)),
+    updateMember: async (id, f) => normMember(await raw.updateMember(id, f)),
+    deleteMember: async (id) => { await raw.deleteMember(id); },
   };
 }
 const storeReady = initStore().then((s) => { store = s; });
@@ -478,6 +598,20 @@ function norm(b) {
     emailSent: !!(b.email_sent ?? b.emailSent),
     reminderSent: !!(b.reminder_sent ?? b.reminderSent),
     createdAt: b.created_at || b.createdAt,
+  };
+}
+
+// Normalise member rows to camelCase (same snake_case/camelCase split
+// as bookings).
+function normMember(m) {
+  if (!m) return null;
+  return {
+    id: m.id,
+    name: m.name, phone: m.phone, email: m.email || '',
+    joinedDate: m.joined_date || m.joinedDate,
+    nextReminderDate: m.next_reminder_date || m.nextReminderDate,
+    active: !!(m.active ?? 1),
+    createdAt: m.created_at || m.createdAt,
   };
 }
 
@@ -538,6 +672,38 @@ function tomorrowInSalonTz() {
   const [y, mo, d] = todayInSalonTz().split('-').map(Number);
   const t = new Date(Date.UTC(y, mo - 1, d + 1));
   return t.toISOString().slice(0, 10);
+}
+
+// A date (YYYY-MM-DD) n days after the given date.
+function addDays(dateStr, n) {
+  const [y, mo, d] = dateStr.split('-').map(Number);
+  const t = new Date(Date.UTC(y, mo - 1, d + n));
+  return t.toISOString().slice(0, 10);
+}
+
+// Membership ($110 for 3 haircuts): members get a reminder text every
+// 9 days after joining, telling them to book their next haircut.
+// Reminders go ONLY to members — never to other clients.
+const MEMBERSHIP_REMINDER_DAYS = 9;
+// Services that count as one of the member's 3 haircuts.
+const HAIRCUT_SERVICE_IDS = ['skin-fade-haircut', 'haircut-beard'];
+// Compare phone numbers by their last 10 digits, so "+1 672-..." and
+// "672-..." match the same person.
+function normalizePhone(p) {
+  const digits = String(p || '').replace(/\D/g, '');
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+// Haircuts a member has used: confirmed, non-blocked bookings on/after
+// their join date, for a haircut service, matched by phone.
+function haircutsUsed(member, bookings) {
+  const phone = normalizePhone(member.phone);
+  if (!phone) return 0;
+  return bookings.filter((b) =>
+    normalizePhone(b.phone) === phone
+    && HAIRCUT_SERVICE_IDS.includes(b.serviceId)
+    && b.status !== 'cancelled' && !b.blocked
+    && b.date >= member.joinedDate
+  ).length;
 }
 
 // Weekday (0=Sunday) of a YYYY-MM-DD date.
@@ -723,7 +889,7 @@ app.get('/api/slots', async (req, res) => {
 });
 
 app.post('/api/bookings', async (req, res) => {
-  const { serviceId, date, time, name, phone, email, notes, blocked } = req.body || {};
+  const { serviceId, date, time, name, phone, email, notes, blocked, joinMembership } = req.body || {};
   const service = SERVICES.find((s) => s.id === serviceId);
   if (!service) return res.status(400).json({ error: 'Please choose a service.' });
   // "Block this time (no customer)" — an owner-only action. The public
@@ -787,6 +953,22 @@ app.post('/api/bookings', async (req, res) => {
       emailNote: 'Time blocked — no customer booking, so no confirmation was sent.',
     });
   }
+  // Membership join: a client ticking "Join membership" while booking
+  // is recorded as a member (join date = today, first reminder 9 days
+  // later). A phone number that is already a member is kept as-is —
+  // no duplicate member, no restarted reminder cycle.
+  let membershipJoined = false;
+  if (joinMembership) {
+    const existing = await store.findMemberByPhone(saved.phone);
+    if (!existing) {
+      const today = todayInSalonTz();
+      await store.insertMember({
+        name: saved.name, phone: saved.phone, email: saved.email,
+        joinedDate: today, nextReminderDate: addDays(today, MEMBERSHIP_REMINDER_DAYS),
+      });
+      membershipJoined = true;
+    }
+  }
   const emailSent = await sendBookingEmails(saved, service);
   if (emailSent) {
     // best-effort flag update (works on every backend); the emails did
@@ -803,6 +985,7 @@ app.post('/api/bookings', async (req, res) => {
     emailNote: emailSent
       ? 'Confirmation email sent to the client and an alert sent to the salon.'
       : 'A confirmation text message has been sent to your phone.',
+    membershipJoined,
   });
 });
 
@@ -944,6 +1127,77 @@ app.delete('/api/blocked-days/:date', requireAdmin, async (req, res) => {
   if (!isValidDate(req.params.date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD.' });
   await store.unblock(req.params.date);
   res.json({ dates: await store.listBlocked() });
+});
+
+// Membership ($110 for 3 haircuts) — owner-only. Members are the ONLY
+// clients who get the 9-day reminder texts; other clients never do.
+app.get('/api/members', requireAdmin, async (req, res) => {
+  const members = await store.listMembers();
+  const bookings = await store.list();
+  res.json(members.map((m) => ({ ...m, haircutsUsed: haircutsUsed(m, bookings) })));
+});
+
+app.post('/api/members', requireAdmin, async (req, res) => {
+  const { name, phone, email, joinedDate } = req.body || {};
+  if (!name || !String(name).trim()) return res.status(400).json({ error: 'Please enter the member name.' });
+  if (!phone || !String(phone).trim()) return res.status(400).json({ error: 'Please enter the member phone number.' });
+  const joined = isValidDate(joinedDate) ? joinedDate : todayInSalonTz();
+  const existing = await store.findMemberByPhone(phone);
+  if (existing) return res.status(409).json({ error: 'This phone number is already a member.' });
+  const member = await store.insertMember({
+    name: String(name).trim(), phone: String(phone).trim(),
+    email: String(email || '').trim().toLowerCase(),
+    joinedDate: joined, nextReminderDate: addDays(joined, MEMBERSHIP_REMINDER_DAYS),
+  });
+  res.status(201).json(member);
+});
+
+app.delete('/api/members/:id', requireAdmin, async (req, res) => {
+  await store.deleteMember(req.params.id);
+  res.json({ ok: true });
+});
+
+// Stop a member's reminders (the member stays on the list).
+app.post('/api/members/:id/deactivate', requireAdmin, async (req, res) => {
+  const member = await store.updateMember(req.params.id, { active: false });
+  if (!member) return res.status(404).json({ error: 'Member not found.' });
+  res.json(member);
+});
+
+// Restart a member: a new membership cycle starting today (join date
+// today, first reminder 9 days later, haircut count restarts).
+app.post('/api/members/:id/reactivate', requireAdmin, async (req, res) => {
+  const today = todayInSalonTz();
+  const member = await store.updateMember(req.params.id, {
+    active: true, joinedDate: today, nextReminderDate: addDays(today, MEMBERSHIP_REMINDER_DAYS),
+  });
+  if (!member) return res.status(404).json({ error: 'Member not found.' });
+  res.json(member);
+});
+
+// Membership reminders — every 9 days after joining, ONLY to members.
+// Admin-only; call once a day from a scheduled job. A member is due
+// when active, has used fewer than 3 haircuts, and their next reminder
+// date is today or earlier. After a text goes out, the next reminder
+// is set 9 days from today, so a repeat call never double-texts.
+app.post('/api/members/reminders/send-due', requireAdmin, async (req, res) => {
+  const today = todayInSalonTz();
+  const members = await store.listMembers();
+  const bookings = await store.list();
+  let sent = 0, failed = 0, skipped = 0;
+  for (const m of members) {
+    if (!m.active) { skipped++; continue; }
+    if (haircutsUsed(m, bookings) >= 3) { skipped++; continue; }
+    if (m.nextReminderDate > today) { skipped++; continue; }
+    if (!smsClient) { skipped++; continue; }
+    const body = `PXCUTZZ reminder: Hi ${m.name}, it's time to book your next membership haircut! Book online at pxcutzz.com or call 6725882101.`;
+    const ok = await sendSms(m.phone, body);
+    if (ok) {
+      await store.updateMember(m.id, { nextReminderDate: addDays(today, MEMBERSHIP_REMINDER_DAYS) });
+      sent++;
+    } else failed++;
+  }
+  res.json({ date: today, sent, failed, skipped, smsConfigured: !!smsClient });
 });
 
 // Owner booking dashboard (separate page; the Manage section on the

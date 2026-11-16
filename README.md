@@ -106,12 +106,12 @@ After saving variables, click **Manual Deploy → Deploy latest commit** (or wai
   visit after a quiet period can take 30–60 seconds to wake up. That is
   normal on the free plan and does not lose bookings.
 - **Free disk is ephemeral.** Bookings live in `data/bookings.db` on the
-  service's disk, which Render wipes on redeploy/restart. On the free tier,
-  treat this app as a working booking site, not long-term storage — check the
-  Manage view / your email alerts regularly. For permanent storage, upgrade
-  to a paid plan with a persistent disk, or move bookings to a free hosted
-  database (e.g. Render PostgreSQL free tier / Neon / Supabase) — that is
-  a small code change to `server.js` only.
+  service's disk, which Render wipes on redeploy/restart. For permanent
+  storage, set `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` (a free Turso
+  hosted-SQLite database — no credit card) on Render: the app then stores
+  bookings in Turso and they survive redeploys/restarts. Without those
+  variables the app uses the local SQLite file (ephemeral on the free
+  tier), with a JSON-file fallback if the native module cannot load.
 - **Free tier limits:** 750 instance hours/month, 512 MB RAM, shared CPU.
   This app is well within those limits.
 - Custom domain: Render dashboard → service → **Settings → Custom Domain**,

@@ -11,7 +11,10 @@ h1, h2, h3 { font-family:"Playfair Display",Georgia,"Times New Roman",serif; }
 .brand-logo { height:42px; width:auto; display:block; }
 .topbar nav a { color:#e8ddc2; margin-left:18px; text-decoration:none; font-size:14px; }
 .topbar nav a:hover { color:#fff; }
-.hero { background:linear-gradient(rgba(20,14,7,.78),rgba(20,14,7,.72)),url(/photos/salon-1.jpg) center/cover no-repeat; color:#fff; padding:72px 0 56px; margin:0 calc(50% - 50vw); }
+.hero { background:linear-gradient(rgba(20,14,7,.78),rgba(20,14,7,.72)),url(/photos/salon-1.jpg) center/cover no-repeat; color:#fff; padding:72px 0 56px; }
+/* NOTE: no negative-margin full-bleed trick here — the hero is a direct
+   child of <body> so it is already full-width; calc(50% - 50vw) caused a
+   slight horizontal scrollbar on desktop (50vw includes the scrollbar). */
 .hero .wrap { display:grid; grid-template-columns:1.6fr 1fr; gap:24px; align-items:center; }
 .hero h1 { font-size:64px; line-height:1; margin:.15em 0; color:#fff; letter-spacing:.04em; }
 .hero h1 .gold { color:#e8c86a; }

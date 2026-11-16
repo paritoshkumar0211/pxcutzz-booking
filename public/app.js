@@ -70,22 +70,12 @@ function setupDateInput() {
   input.min = vancouverToday();
   const max = new Date(); max.setDate(max.getDate() + 60);
   input.max = max.toISOString().slice(0, 10);
-  // The field starts empty on purpose: picking any day (today included)
-  // fires a change, which loads the times automatically — no button
-  // needed. A pre-filled today would need a "See times" click instead.
+  input.value = vancouverToday();
 }
 
 async function loadSlots() {
   const date = $('dateInput').value;
   if (!date) { showError('Please pick a day.'); return; }
-  // Tuesdays are the salon's closed day (mirrors the server's
-  // OPENING_HOURS.closedDay): say so right here instead of loading an
-  // empty Time step, which looks broken. Other closed days are caught
-  // by the server response below.
-  if (new Date(`${date}T12:00:00`).getDay() === 2) {
-    showError('The salon is closed on Tuesdays. Please pick another day.');
-    return;
-  }
   state.date = date;
   $('slotSummary').textContent = `${state.service.name} · ${date}`;
   const list = $('slotList');
@@ -93,16 +83,8 @@ async function loadSlots() {
   setStep(3);
   try {
     const data = await api(`/api/slots?date=${encodeURIComponent(date)}&serviceId=${encodeURIComponent(state.service.id)}`);
-    if (data.closed) {
-      // A closed day (e.g. an owner-blocked holiday) has no times to
-      // show: go back to the Day step with a clear message instead of
-      // leaving an empty Time step, which looks broken.
-      setStep(2);
-      showError(data.message || 'The salon is closed on that day. Please pick another day.');
-      return;
-    }
     list.innerHTML = '';
-    if (data.slots.length === 0) {
+    if (data.closed || data.slots.length === 0) {
       list.innerHTML = `<p>${data.message || 'No times available on that day. Please pick another day.'}</p>`;
       return;
     }
@@ -154,34 +136,13 @@ async function submitBooking(ev) {
 }
 
 $('serviceSelect').addEventListener('change', (e) => selectService(e.target.value));
-$('toDayBtn').onclick = () => { if (!state.service) { showError('Please choose a service.'); return; } setStep(2); };
+$('toDayBtn').onclick = () => { if (!state.service) { showError('Please choose a service.'); return; } setupDateInput(); setStep(2); };
 $('backToServiceBtn').onclick = () => setStep(1);
-$('backToDayBtn').onclick = () => { $('dateInput').value = ''; setStep(2); };
+$('toTimeBtn').onclick = loadSlots;
+$('backToDayBtn').onclick = () => setStep(2);
 $('backToTimeBtn').onclick = () => setStep(3);
 $('bookingForm').addEventListener('submit', submitBooking);
-$('bookAnotherBtn').onclick = () => { $('bookingForm').reset(); $('dateInput').value = ''; state.date = null; state.slot = null; setStep(1); };
-// Picking a day loads its times straight away — no "See times" click.
-// (The old "See times" button is gone; the change event is the trigger.)
-// Debounced: typing the year digit-by-digit fires change/input with a
-// partial year (e.g. 0002). Past or partial dates are ignored silently
-// — no error flash while typing — and a tap on the calendar picker
-// fires once, so the delay is barely noticeable. Listening to both
-// change and input covers mobile pickers that fire one but not the other.
-let dateChangeTimer = null;
-function onDateChange() {
-  clearTimeout(dateChangeTimer);
-  dateChangeTimer = setTimeout(() => {
-    const date = $('dateInput').value;
-    if (!date) return;
-    if (date < vancouverToday()) return;
-    loadSlots();
-  }, 400);
-}
-$('dateInput').addEventListener('change', onDateChange);
-$('dateInput').addEventListener('input', onDateChange);
-// blur fires when a mobile date picker is dismissed (Done) — a third
-// trigger, in case that picker fires neither change nor input.
-$('dateInput').addEventListener('blur', onDateChange);
+$('bookAnotherBtn').onclick = () => { $('bookingForm').reset(); setStep(1); };
+$('dateInput').addEventListener('change', () => { if (!$('stepTime').classList.contains('hidden')) loadSlots(); });
 
-setupDateInput();
 loadServices();

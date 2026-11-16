@@ -12,6 +12,8 @@ const state = {
   viewYear: 0,
   viewMonth: 0,
   selectedDate: null, // YYYY-MM-DD
+  addSelectedTime: null, // time string picked in the Add slot grid
+  editSelectedTime: null, // time string picked in the Edit slot grid
 };
 
 function vancouverToday() {
@@ -96,12 +98,12 @@ function fillServiceSelect() {
 // ---------------------------------------------------------------------------
 // Calendar
 // ---------------------------------------------------------------------------
-// Calendar badges count active bookings only (cancelled excluded,
-// completed still counted).
+// Calendar badges count customer bookings only (cancelled and blocked
+// slots excluded, completed still counted).
 function countsByDate() {
   const counts = {};
   state.bookings.forEach((b) => {
-    if (b.status === 'cancelled') return;
+    if (b.status === 'cancelled' || b.blocked) return;
     counts[b.date] = (counts[b.date] || 0) + 1;
   });
   return counts;
@@ -201,9 +203,9 @@ function renderDayDetail() {
     .sort((a, b) => (a.startMinutes ?? 0) - (b.startMinutes ?? 0));
   const isTuesday = weekdayOf(ds) === CLOSED_WEEKDAY;
   const isBlocked = state.blocked.has(ds);
-  // Day count counts active bookings only (cancelled excluded,
-  // completed still counted).
-  const activeCount = rows.filter((b) => b.status !== 'cancelled').length;
+  // Day count counts customer bookings only (cancelled and blocked
+  // slots excluded, completed still counted).
+  const activeCount = rows.filter((b) => b.status !== 'cancelled' && !b.blocked).length;
 
   $('dayTitle').textContent = formatDay(ds);
   $('dayCount').textContent = isTuesday
@@ -231,6 +233,7 @@ function renderDayDetail() {
     const tr = document.createElement('tr');
     if (b.status === 'completed') tr.classList.add('row-done');
     if (b.status === 'cancelled') tr.classList.add('row-cancelled');
+    if (b.blocked) tr.classList.add('row-blocked');
     tr.innerHTML = '<td></td><td></td><td></td><td></td><td></td>';
     const tds = tr.querySelectorAll('td');
     // TIME: start time, with the service duration beneath it.
@@ -244,47 +247,73 @@ function renderDayDetail() {
       dur.textContent = `${svc.duration} min`;
       tds[0].appendChild(dur);
     }
-    // CUSTOMER (+ status tag for completed/cancelled rows).
-    tds[1].textContent = b.name;
-    if (b.status === 'completed' || b.status === 'cancelled') {
+    // CUSTOMER (+ status tag for completed/cancelled/blocked rows).
+    if (b.blocked) {
+      tds[1].textContent = 'Blocked';
       const tag = document.createElement('span');
       tag.className = 'status-tag';
-      tag.textContent = b.status === 'completed' ? 'Completed' : 'Cancelled';
+      tag.textContent = 'Blocked';
       tds[1].appendChild(document.createElement('br'));
       tds[1].appendChild(tag);
+    } else {
+      tds[1].textContent = b.name;
+      if (b.status === 'completed' || b.status === 'cancelled') {
+        const tag = document.createElement('span');
+        tag.className = 'status-tag';
+        tag.textContent = b.status === 'completed' ? 'Completed' : 'Cancelled';
+        tds[1].appendChild(document.createElement('br'));
+        tds[1].appendChild(tag);
+      }
     }
+    // SERVICE (+ the owner's note underneath, when present).
     tds[2].textContent = b.serviceName;
-    tds[3].textContent = b.phone;
-    // ACTIONS: Send SMS + Edit / Complete / Cancel. Cancelled rows
-    // show no actions at all; completed rows lose the Complete button.
+    if (b.notes) {
+      const note = document.createElement('div');
+      note.className = 'booking-note';
+      note.textContent = b.notes;
+      tds[2].appendChild(note);
+    }
+    tds[3].textContent = b.blocked ? '—' : b.phone;
+    // ACTIONS: blocked rows can only be cancelled (which frees the
+    // slot again). Cancelled rows show no actions at all; completed
+    // rows lose the Complete button.
     const actions = tds[4];
     actions.classList.add('dash-actions');
     if (b.status !== 'cancelled') {
-      const sms = document.createElement('a');
-      sms.className = 'sms-link';
-      sms.textContent = 'Send SMS';
-      sms.href = `sms:${encodeURIComponent(b.phone)}?&body=${encodeURIComponent(smsBody(b))}`;
-      actions.appendChild(sms);
-      const editBtn = document.createElement('button');
-      editBtn.type = 'button';
-      editBtn.className = 'row-action';
-      editBtn.textContent = 'Edit';
-      editBtn.onclick = () => showEditForm(b);
-      actions.appendChild(editBtn);
-      if (b.status !== 'completed') {
-        const doneBtn = document.createElement('button');
-        doneBtn.type = 'button';
-        doneBtn.className = 'row-action';
-        doneBtn.textContent = 'Complete';
-        doneBtn.onclick = () => rowAction(b, 'complete', doneBtn);
-        actions.appendChild(doneBtn);
+      if (b.blocked) {
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'row-action danger';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.onclick = () => rowAction(b, 'cancel', cancelBtn);
+        actions.appendChild(cancelBtn);
+      } else {
+        const sms = document.createElement('a');
+        sms.className = 'sms-link';
+        sms.textContent = 'Send SMS';
+        sms.href = `sms:${encodeURIComponent(b.phone)}?&body=${encodeURIComponent(smsBody(b))}`;
+        actions.appendChild(sms);
+        const editBtn = document.createElement('button');
+        editBtn.type = 'button';
+        editBtn.className = 'row-action';
+        editBtn.textContent = 'Edit';
+        editBtn.onclick = () => showEditForm(b);
+        actions.appendChild(editBtn);
+        if (b.status !== 'completed') {
+          const doneBtn = document.createElement('button');
+          doneBtn.type = 'button';
+          doneBtn.className = 'row-action';
+          doneBtn.textContent = 'Complete';
+          doneBtn.onclick = () => rowAction(b, 'complete', doneBtn);
+          actions.appendChild(doneBtn);
+        }
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'row-action danger';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.onclick = () => rowAction(b, 'cancel', cancelBtn);
+        actions.appendChild(cancelBtn);
       }
-      const cancelBtn = document.createElement('button');
-      cancelBtn.type = 'button';
-      cancelBtn.className = 'row-action danger';
-      cancelBtn.textContent = 'Cancel';
-      cancelBtn.onclick = () => rowAction(b, 'cancel', cancelBtn);
-      actions.appendChild(cancelBtn);
     }
     tbody.appendChild(tr);
   });
@@ -292,7 +321,12 @@ function renderDayDetail() {
 
 // One-tap Complete, confirmed Cancel — then reload the bookings list.
 async function rowAction(b, action, btn) {
-  if (action === 'cancel' && !window.confirm(`Cancel ${b.name}'s ${b.serviceName} booking on ${b.date} at ${b.time}? The time slot will be freed.`)) return;
+  if (action === 'cancel') {
+    const msg = b.blocked
+      ? `Unblock ${b.serviceName} at ${b.time} on ${b.date}? The time slot will be free again.`
+      : `Cancel ${b.name}'s ${b.serviceName} booking on ${b.date} at ${b.time}? The time slot will be freed.`;
+    if (!window.confirm(msg)) return;
+  }
   showError('');
   if (btn) btn.disabled = true;
   try {
@@ -324,6 +358,22 @@ async function toggleBlockDay() {
 }
 
 // ---------------------------------------------------------------------------
+// Slot grid (shared by the Add and Edit forms): clickable time buttons,
+// the chosen one highlighted. onSelect receives the picked time string.
+// ---------------------------------------------------------------------------
+function renderSlotGrid(container, times, selected, onSelect) {
+  container.innerHTML = '';
+  times.forEach((t) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'slot' + (t === selected ? ' selected' : '');
+    b.textContent = t;
+    b.onclick = () => onSelect(t);
+    container.appendChild(b);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Add booking
 // ---------------------------------------------------------------------------
 function hideAddForm() {
@@ -334,25 +384,40 @@ function hideAddForm() {
   hideEditForm();
 }
 
+// "Block this time (no customer)": customer fields don't apply —
+// disable and grey them out, and the submit button says what it does.
+function syncBlockFields() {
+  const blocked = $('addBlock').checked;
+  [$('addName'), $('addPhone'), $('addEmail')].forEach((el) => {
+    el.disabled = blocked;
+    if (blocked) el.value = '';
+  });
+  $('addName').required = !blocked;
+  $('addPhone').required = !blocked;
+  $('addSubmitBtn').textContent = blocked ? 'Block this time' : 'Save booking';
+}
+
 async function loadAddSlots() {
   const serviceId = $('addService').value;
   const hint = $('addTimeHint');
-  const sel = $('addTime');
-  sel.innerHTML = '';
+  const grid = $('addSlotGrid');
+  grid.innerHTML = '';
   hint.textContent = 'Loading times…';
   try {
     const data = await api(`/api/slots?date=${encodeURIComponent(state.selectedDate)}&serviceId=${encodeURIComponent(serviceId)}`);
     if (data.closed || data.slots.length === 0) {
       hint.textContent = data.message || 'No times available on that day.';
+      state.addSelectedTime = null;
       return;
     }
     hint.textContent = '';
-    data.slots.forEach((s) => {
-      const opt = document.createElement('option');
-      opt.value = s.time;
-      opt.textContent = s.time;
-      sel.appendChild(opt);
-    });
+    const times = data.slots.map((s) => s.time);
+    if (!times.includes(state.addSelectedTime)) state.addSelectedTime = null;
+    const pick = (t) => {
+      state.addSelectedTime = t;
+      renderSlotGrid(grid, times, state.addSelectedTime, pick);
+    };
+    renderSlotGrid(grid, times, state.addSelectedTime, pick);
   } catch (e) {
     hint.textContent = e.message;
   }
@@ -361,6 +426,13 @@ async function loadAddSlots() {
 function showAddForm() {
   hideEditForm();
   $('addDateLabel').textContent = formatDay(state.selectedDate);
+  $('addName').value = '';
+  $('addPhone').value = '';
+  $('addEmail').value = '';
+  $('addNotes').value = '';
+  $('addBlock').checked = false;
+  state.addSelectedTime = null;
+  syncBlockFields();
   $('addBookingForm').classList.remove('hidden');
   $('addSuccess').classList.add('hidden');
   $('addError').classList.add('hidden');
@@ -374,6 +446,12 @@ async function submitAddBooking(ev) {
   const ok = $('addSuccess');
   err.classList.add('hidden');
   ok.classList.add('hidden');
+  const blocked = $('addBlock').checked;
+  if (!state.addSelectedTime) {
+    err.textContent = 'Please pick a time slot.';
+    err.classList.remove('hidden');
+    return;
+  }
   const btn = $('addSubmitBtn');
   btn.disabled = true;
   btn.textContent = 'Saving…';
@@ -384,20 +462,28 @@ async function submitAddBooking(ev) {
       body: JSON.stringify({
         serviceId: $('addService').value,
         date: state.selectedDate,
-        time: $('addTime').value,
-        name: $('addName').value.trim(),
-        phone: $('addPhone').value.trim(),
+        time: state.addSelectedTime,
+        name: blocked ? '' : $('addName').value.trim(),
+        phone: blocked ? '' : $('addPhone').value.trim(),
         // Email is required by the booking API; when the owner leaves it
         // blank we store a placeholder so no confirmation is attempted.
-        email: email || 'no-email@pxcutzz.local',
+        email: blocked ? '' : (email || 'no-email@pxcutzz.local'),
+        notes: $('addNotes').value.trim(),
+        blocked,
       }),
     });
     const b = res.booking;
-    ok.textContent = `Booked: ${b.name} — ${b.serviceName} on ${b.date} at ${b.time}.`;
+    ok.textContent = b.blocked
+      ? `Blocked: ${b.serviceName} on ${b.date} at ${b.time} — no customer, no confirmation sent.`
+      : `Booked: ${b.name} — ${b.serviceName} on ${b.date} at ${b.time}.`;
     ok.classList.remove('hidden');
     $('addName').value = '';
     $('addPhone').value = '';
     $('addEmail').value = '';
+    $('addNotes').value = '';
+    $('addBlock').checked = false;
+    state.addSelectedTime = null;
+    syncBlockFields();
     const bookings = await api('/api/bookings');
     state.bookings = bookings;
     renderCalendar();
@@ -408,7 +494,7 @@ async function submitAddBooking(ev) {
     err.classList.remove('hidden');
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Save booking';
+    syncBlockFields();
   }
 }
 
@@ -427,9 +513,8 @@ async function loadEditSlots() {
   const serviceId = $('editService').value;
   const date = $('editDate').value;
   const hint = $('editTimeHint');
-  const sel = $('editTime');
-  const prev = sel.value;
-  sel.innerHTML = '';
+  const grid = $('editSlotGrid');
+  grid.innerHTML = '';
   hint.textContent = 'Loading times…';
   try {
     const data = await api(`/api/slots?date=${encodeURIComponent(date)}&serviceId=${encodeURIComponent(serviceId)}`);
@@ -440,14 +525,12 @@ async function loadEditSlots() {
     if (original && original.date === date && original.serviceId === serviceId && !times.includes(original.time)) {
       times.unshift(original.time);
     }
-    times.forEach((t) => {
-      const opt = document.createElement('option');
-      opt.value = t;
-      opt.textContent = t;
-      sel.appendChild(opt);
-    });
-    if (prev && times.includes(prev)) sel.value = prev;
-    else if (original && original.date === date && original.serviceId === serviceId) sel.value = original.time;
+    if (!times.includes(state.editSelectedTime)) state.editSelectedTime = null;
+    const pick = (t) => {
+      state.editSelectedTime = t;
+      renderSlotGrid(grid, times, state.editSelectedTime, pick);
+    };
+    renderSlotGrid(grid, times, state.editSelectedTime, pick);
   } catch (e) {
     hint.textContent = e.message;
   }
@@ -456,7 +539,7 @@ async function loadEditSlots() {
 function showEditForm(b) {
   hideAddForm();
   $('editId').value = b.id;
-  $('editNameLabel').textContent = b.name;
+  $('editNameLabel').textContent = b.blocked ? `Blocked time — ${b.serviceName}` : b.name;
   $('editService').value = b.serviceId;
   $('editDate').value = b.date;
   $('editName').value = b.name;
@@ -464,6 +547,13 @@ function showEditForm(b) {
   // Owner-added bookings without an email store a placeholder; show it
   // as blank and restore the placeholder on save if still blank.
   $('editEmail').value = b.email === 'no-email@pxcutzz.local' ? '' : b.email;
+  $('editNotes').value = b.notes || '';
+  // A blocked slot has no customer — grey the customer fields out.
+  $('editBlockedNote').classList.toggle('hidden', !b.blocked);
+  [$('editName'), $('editPhone'), $('editEmail')].forEach((el) => { el.disabled = !!b.blocked; });
+  $('editName').required = !b.blocked;
+  $('editPhone').required = !b.blocked;
+  state.editSelectedTime = b.time;
   $('editBookingForm').classList.remove('hidden');
   $('editSuccess').classList.add('hidden');
   $('editError').classList.add('hidden');
@@ -477,6 +567,11 @@ async function submitEditBooking(ev) {
   const ok = $('editSuccess');
   err.classList.add('hidden');
   ok.classList.add('hidden');
+  if (!state.editSelectedTime) {
+    err.textContent = 'Please pick a time slot.';
+    err.classList.remove('hidden');
+    return;
+  }
   const btn = $('editSubmitBtn');
   btn.disabled = true;
   btn.textContent = 'Saving…';
@@ -486,10 +581,11 @@ async function submitEditBooking(ev) {
       body: JSON.stringify({
         serviceId: $('editService').value,
         date: $('editDate').value,
-        time: $('editTime').value,
+        time: state.editSelectedTime,
         name: $('editName').value.trim(),
         phone: $('editPhone').value.trim(),
         email: $('editEmail').value.trim() || 'no-email@pxcutzz.local',
+        notes: $('editNotes').value.trim(),
       }),
     });
     state.bookings = await api('/api/bookings');
@@ -526,6 +622,7 @@ $('addBookingBtn').onclick = showAddForm;
 $('cancelAddBtn').onclick = hideAddForm;
 $('addBookingForm').addEventListener('submit', submitAddBooking);
 $('addService').addEventListener('change', loadAddSlots);
+$('addBlock').addEventListener('change', syncBlockFields);
 $('cancelEditBtn').onclick = hideEditForm;
 $('editBookingForm').addEventListener('submit', submitEditBooking);
 $('editService').addEventListener('change', loadEditSlots);

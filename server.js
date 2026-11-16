@@ -17,10 +17,11 @@
  * API reports emailSent: false in that case.
  *
  * SMS: Twilio, only when TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and
- * TWILIO_PHONE_NUMBER are all set. Booking confirmations and
- * 1-day-before reminders are sent fire-and-forget — a booking never
- * fails because SMS is unconfigured or a send fails. The API reports
- * smsConfigured in /api/health.
+ * TWILIO_PHONE_NUMBER are all set. 3-hour appointment reminders and
+ * membership texts are sent fire-and-forget — a booking never
+ * fails because SMS is unconfigured or a send fails. Booking
+ * confirmation texts were removed 2026-11-16 at the owner's request.
+ * The API reports smsConfigured in /api/health.
  */
 
 const express = require('express');
@@ -915,19 +916,10 @@ function sendMembershipWelcomeSms(name, phone, joinedDate) {
   sendSms(phone, body).catch((e) => console.error('Membership welcome SMS failed:', e.message));
 }
 
-// Booking confirmation texts: one to the client, one to the owner.
-// Fire-and-forget — failures are logged by sendSms and never thrown.
-async function sendBookingSms(booking, service) {
-  // booking is the public shape: time is already formatted, startMinutes
-  // is NOT present — recomputing it here produced "NaN:NaN AM".
-  const time = booking.time;
-  const date = formatDate(booking.date);
-  const clientBody = `PXCUTZZ: Your ${service.name} appointment is confirmed for ${date} at ${time}. See you at ${SALON_ADDRESS}. To change or cancel call 6725882101.`;
-  await sendSms(booking.phone, clientBody);
-  // No SMS to the owner on bookings (removed 2026-11-16 at the owner's
-  // request): he checks the dashboard himself and wants no booking
-  // messages — no owner SMS, no chat alerts. Client texts continue.
-}
+// Booking confirmation texts were removed 2026-11-16 at the owner's
+// request: clients now get a confirmation email instead, and only the
+// 3-hour reminder still goes by SMS. Membership texts (welcome,
+// 9-day and renewal reminders) are unchanged.
 
 // ---------------------------------------------------------------------------
 // App
@@ -1077,9 +1069,9 @@ app.post('/api/bookings', async (req, res) => {
     try { await store.markEmailSent(row.id); saved.emailSent = true; } catch (_) { /* flag stays false */ }
   }
   saved.emailSent = emailSent;
-  // Confirmation texts (client + owner). Fire-and-forget: the booking
-  // response never waits on Twilio and never fails because of SMS.
-  sendBookingSms(saved, service).catch((e) => console.error('SMS send failed:', e.message));
+  // No booking confirmation text (removed 2026-11-16 at the owner's
+  // request) — the confirmation email above is the confirmation, and
+  // the 3-hour reminder SMS still goes out via /api/reminders/send-due.
   // If this booking finished the member's membership (their 3rd
   // haircut), invite them to join the next one — fire-and-forget, so
   // it never blocks or fails the booking response.
@@ -1089,7 +1081,7 @@ app.post('/api/bookings', async (req, res) => {
     emailSent,
     emailNote: emailSent
       ? 'Confirmation email sent to the client and an alert sent to the salon.'
-      : 'A confirmation text message has been sent to your phone.',
+      : 'We could not send a confirmation email. To change or cancel call 6725882101.',
     membershipJoined,
   });
 });
@@ -1210,7 +1202,7 @@ app.post('/api/sms/test', requireAdmin, async (req, res) => {
   if (!smsClient) {
     return res.status(503).json({ ok: false, error: 'SMS is not configured on this server (set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_PHONE_NUMBER).' });
   }
-  const ok = await sendSms(OWNER_PHONE, 'PXCUTZZ: SMS service is working. Booking confirmations and reminders will come from this number.');
+  const ok = await sendSms(OWNER_PHONE, 'PXCUTZZ: SMS service is working. Appointment reminders will come from this number.');
   if (ok) return res.json({ ok: true, message: 'Test SMS sent to the owner.' });
   return res.status(502).json({ ok: false, error: 'Test SMS failed to send. Check the Twilio credentials and number.' });
 });

@@ -263,8 +263,10 @@ function membershipHaircutNumber(b) {
 
 function renderDayDetail() {
   const ds = state.selectedDate;
+  // Cancelled appointments are not shown at all — once cancelled, the
+  // row disappears and the slot simply looks free again.
   const rows = state.bookings
-    .filter((b) => b.date === ds)
+    .filter((b) => b.date === ds && b.status !== 'cancelled')
     .sort((a, b) => (a.startMinutes ?? 0) - (b.startMinutes ?? 0));
   const isTuesday = weekdayOf(ds) === CLOSED_WEEKDAY;
   const isBlocked = state.blocked.has(ds);

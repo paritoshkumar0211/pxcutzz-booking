@@ -239,10 +239,13 @@ function normalizePhone(p) {
 // Is this booking one of the member's 3 membership haircuts? It counts
 // when the client is an active member, the service is a haircut, the
 // date is inside the membership month, and the booking is among the
-// member's first 3 such haircuts (in time order). Only haircuts
-// already done get a number — a future appointment is not one of the
-// 3 until its day arrives (mirrors the server count). Returns the
-// haircut number (1–3), or 0 when it is not a membership appointment.
+// member's first 3 such haircuts (in time order). The tag shows on
+// future appointments too — it is the appointment's number among the
+// 3 (what it WILL be), so the owner can see at a glance that it is a
+// member's haircut. That number can be ahead of the member's count in
+// the Members table, which only includes haircuts already done.
+// Returns the haircut number (1–3), or 0 when it is not a membership
+// appointment.
 function membershipHaircutNumber(b) {
   if (b.blocked || b.status === 'cancelled') return 0;
   if (!HAIRCUT_SERVICE_IDS.includes(b.serviceId)) return 0;
@@ -251,7 +254,6 @@ function membershipHaircutNumber(b) {
   const member = state.members.find((m) => m.active && normalizePhone(m.phone) === phone);
   if (!member || !member.expiryDate) return 0;
   if (b.date < member.joinedDate || b.date > member.expiryDate) return 0;
-  if (b.date > vancouverToday()) return 0;
   // Only bookings made after the member was added count — ones already
   // on the books are inside the "haircuts already done" number the
   // owner typed, so this appointment has no number among the 3.

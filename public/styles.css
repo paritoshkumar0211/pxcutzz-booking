@@ -89,7 +89,9 @@ footer a { color:#e8ddc2; }
 .cal-cell { position:relative; aspect-ratio:1/1; background:var(--surface); border:1px solid var(--line); border-radius:10px; cursor:pointer; font-size:16px; color:var(--ink); padding:0; display:flex; align-items:flex-start; justify-content:flex-start; }
 .cal-cell:hover { border-color:var(--accent); }
 .cal-cell.other-month { background:transparent; border-color:transparent; color:#b9ad97; cursor:default; }
-.cal-cell.closed { background:#f0e9d8; color:#8a7a5c; }
+.cal-cell.closed { background:#f0e9d8; color:#8a7a5c; cursor:default; }
+.cal-cell:disabled { cursor:default; }
+.cal-cell:disabled:hover { border-color:var(--line); }
 .cal-cell.blocked { background:#f7e8e8; border-color:#e5b8b8; }
 .cal-cell.today { background:#232b45; color:#fff; border-color:#232b45; }
 .cal-cell.today .cal-closed { color:#c7cede; }

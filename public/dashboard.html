@@ -56,8 +56,14 @@
       <form id="addBookingForm" class="hidden" novalidate>
         <h3>Add a booking — <span id="addDateLabel"></span></h3>
         <label class="block-check"><input type="checkbox" id="addBlock"> Block this time (no customer)</label>
-        <label class="field-label" for="addService">Service</label>
-        <select id="addService"></select>
+        <div id="addDurationRow" class="hidden">
+          <label class="field-label" for="addDuration">Duration (minutes)</label>
+          <input type="number" id="addDuration" min="15" max="480" step="15" value="30">
+        </div>
+        <div id="addServiceRow">
+          <label class="field-label" for="addService">Service</label>
+          <select id="addService"></select>
+        </div>
         <label class="field-label">Time</label>
         <div class="slots" id="addSlotGrid"></div>
         <p class="muted" id="addTimeHint"></p>
@@ -78,8 +84,14 @@
         <h3>Edit booking — <span id="editNameLabel"></span></h3>
         <input type="hidden" id="editId">
         <p class="muted hidden" id="editBlockedNote">This time is blocked (no customer) — customer details don't apply.</p>
-        <label class="field-label" for="editService">Service</label>
-        <select id="editService"></select>
+        <div id="editDurationRow" class="hidden">
+          <label class="field-label" for="editDuration">Duration (minutes)</label>
+          <input type="number" id="editDuration" min="15" max="480" step="15" value="30">
+        </div>
+        <div id="editServiceRow">
+          <label class="field-label" for="editService">Service</label>
+          <select id="editService"></select>
+        </div>
         <label class="field-label" for="editDate">Date</label>
         <input type="date" id="editDate">
         <label class="field-label">Time</label>

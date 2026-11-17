@@ -1030,6 +1030,18 @@ function sendMembershipWelcomeSms(name, phone, joinedDate) {
   sendSms(phone, body).catch((e) => console.error('Membership welcome SMS failed:', e.message));
 }
 
+// Confirmation text for a booking the OWNER makes on the dashboard:
+// the client didn't book it themselves, so they get a text telling
+// them about the appointment (online self-bookings still get email
+// only — the confirmation text stays off there, per the owner's
+// 2026-11-16 decision). Returns true when the text went out.
+async function sendDashboardBookingSms(booking, service) {
+  if (!booking.phone) return false;
+  const when = `${formatDate(booking.date)} at ${minutesToTime(booking.startMinutes)} (${TZ})`;
+  const body = `PXCUTZZ: Hi ${booking.name}, your appointment is confirmed — ${service.name} on ${when}. See you soon! To change or cancel call 6725882101.`;
+  return sendSms(booking.phone, body);
+}
+
 // Booking confirmation texts were removed 2026-11-16 at the owner's
 // request: clients now get a confirmation email instead, and only the
 // 3-hour reminder still goes by SMS. Membership texts (welcome,
@@ -1118,6 +1130,10 @@ app.post('/api/bookings', async (req, res) => {
   // admin endpoints (requireAdmin's rule, applied inline here because
   // this endpoint is otherwise public).
   const isBlockedBooking = !!blocked;
+  // A booking made from the dashboard carries the admin token (the
+  // dashboard sends it on every request; the public form never does).
+  // The owner books it for the client, so the client gets a text.
+  const isDashboardBooking = !!ADMIN_TOKEN && (req.query.token || req.headers['x-admin-token']) === ADMIN_TOKEN;
   const service = SERVICES.find((s) => s.id === serviceId);
   if (!service && !isBlockedBooking) return res.status(400).json({ error: 'Please choose a service.' });
   // A blocked slot has no service — the owner sets how long to block
@@ -1212,9 +1228,18 @@ app.post('/api/bookings', async (req, res) => {
     try { await store.markEmailSent(row.id); saved.emailSent = true; } catch (_) { /* flag stays false */ }
   }
   saved.emailSent = emailSent;
-  // No booking confirmation text (removed 2026-11-16 at the owner's
-  // request) — the confirmation email above is the confirmation, and
-  // the 3-hour reminder SMS still goes out via /api/reminders/send-due.
+  // Dashboard bookings: the owner books it for the client, so the
+  // client gets a confirmation text. A failed text never fails the
+  // booking. Online self-bookings still get email only.
+  let smsSent = false;
+  if (isDashboardBooking && saved.phone) {
+    smsSent = await sendDashboardBookingSms(saved, service);
+  }
+  // No booking confirmation text for online self-bookings (removed
+  // 2026-11-16 at the owner's request) — the confirmation email above
+  // is the confirmation, and the 3-hour reminder SMS still goes out
+  // via /api/reminders/send-due. Dashboard bookings are the exception:
+  // the owner books for the client, so the client gets a text (above).
   // If this booking finished the member's membership (their 3rd
   // haircut, counting only haircuts whose day has arrived — a future
   // booking does not finish it yet), invite them to join the next
@@ -1224,6 +1249,7 @@ app.post('/api/bookings', async (req, res) => {
   res.status(201).json({
     booking: saved,
     emailSent,
+    smsSent,
     emailNote: emailSent
       ? 'Confirmation email sent to the client and an alert sent to the salon.'
       : 'We could not send a confirmation email. To change or cancel call 6725882101.',

@@ -26,6 +26,15 @@ function weekdayOf(dateStr) {
   return new Date(Date.UTC(y, mo - 1, d)).getUTCDay();
 }
 
+// Advance a YYYY-MM-DD date until it is not a Tuesday (closed day),
+// so a default selection never lands on a closed Tuesday.
+function nextOpenDate(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  while (dt.getUTCDay() === CLOSED_WEEKDAY) dt.setUTCDate(dt.getUTCDate() + 1);
+  return dt.toISOString().slice(0, 10);
+}
+
 function dateStrOf(y, m, d) {
   return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
@@ -168,7 +177,11 @@ function renderCalendar() {
     cell.type = 'button';
     cell.className = 'cal-cell';
     const wd = weekdayOf(ds);
-    if (wd === CLOSED_WEEKDAY) cell.classList.add('closed');
+    // Tuesdays are closed: the cell is disabled (not clickable at
+    // all), not just labelled — the owner asked for the Tuesday
+    // option itself to be off.
+    const isClosedDay = wd === CLOSED_WEEKDAY;
+    if (isClosedDay) { cell.classList.add('closed'); cell.disabled = true; }
     if (state.blocked.has(ds)) cell.classList.add('blocked');
     if (ds === today) cell.classList.add('today');
     if (ds === state.selectedDate) cell.classList.add('selected');
@@ -184,7 +197,7 @@ function renderCalendar() {
       badge.textContent = counts[ds];
       cell.appendChild(badge);
     }
-    if (wd === CLOSED_WEEKDAY) {
+    if (isClosedDay) {
       const lbl = document.createElement('span');
       lbl.className = 'cal-closed';
       lbl.textContent = 'closed';
@@ -196,7 +209,7 @@ function renderCalendar() {
       cell.appendChild(lbl);
     }
 
-    cell.onclick = () => { state.selectedDate = ds; hideAddForm(); renderCalendar(); renderDayDetail(); };
+    if (!isClosedDay) cell.onclick = () => { state.selectedDate = ds; hideAddForm(); renderCalendar(); renderDayDetail(); };
     grid.appendChild(cell);
   }
 }
@@ -210,7 +223,7 @@ function changeMonth(delta) {
   state.viewMonth = m;
   const today = vancouverToday();
   const [ty, tm] = today.split('-').map(Number);
-  state.selectedDate = (y === ty && m === tm - 1) ? today : dateStrOf(y, m, 1);
+  state.selectedDate = (y === ty && m === tm - 1) ? today : nextOpenDate(dateStrOf(y, m, 1));
   hideAddForm();
   renderCalendar();
   renderDayDetail();

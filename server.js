@@ -697,6 +697,18 @@ function formatDateShort(d) {
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(dt);
 }
 
+// First name only ("Jashan" from "Jashan painter"). The owner writes
+// a reminder word after a client's name in the dashboard ("painter",
+// "roofer", "yvr") so he can tell same-named clients apart — that
+// word is for his memory only and must never reach the client. Every
+// client-facing greeting (SMS and email) uses firstNameOf, so the
+// client only ever sees their first name; the dashboard keeps
+// showing the full name as the owner wrote it.
+function firstNameOf(name) {
+  const first = String(name || '').trim().split(/\s+/)[0] || '';
+  return first || String(name || '').trim();
+}
+
 function timeToMinutes(t) {
   const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec((t || '').trim());
   if (!m) return null;
@@ -902,7 +914,7 @@ async function sendBookingEmails(booking, service) {
     from: RESEND_API_KEY ? RESEND_FROM : gmailFrom,
     to: booking.email,
     subject: `Your ${SALON_NAME} appointment is booked — ${formatDate(booking.date)}`,
-    text: `Hi ${booking.name},\n\nYour appointment at ${SALON_NAME} is booked:\n\nService: ${service.name} (${service.priceLabel})\nWhen: ${clientWhen}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nIf you need to change or cancel, please call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
+    text: `Hi ${firstNameOf(booking.name)},\n\nYour appointment at ${SALON_NAME} is booked:\n\nService: ${service.name} (${service.priceLabel})\nWhen: ${clientWhen}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nIf you need to change or cancel, please call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
   };
   const salonMail = {
     from: RESEND_API_KEY ? RESEND_FROM_BOOKINGS : `"${SALON_NAME} bookings" <${process.env.GMAIL_USER}>`,
@@ -936,7 +948,7 @@ async function sendReminderEmail(booking, service) {
     from: RESEND_API_KEY ? RESEND_FROM : gmailFrom,
     to: booking.email,
     subject: `Reminder: your ${SALON_NAME} appointment is tomorrow — ${formatDate(booking.date)}`,
-    text: `Hi ${booking.name},\n\nThis is a reminder that your appointment at ${SALON_NAME} is tomorrow:\n\nService: ${service.name}${service.priceLabel ? ` (${service.priceLabel})` : ''}\nWhen: ${clientWhen}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nSee you soon! If you need to change or cancel, please call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
+    text: `Hi ${firstNameOf(booking.name)},\n\nThis is a reminder that your appointment at ${SALON_NAME} is tomorrow:\n\nService: ${service.name}${service.priceLabel ? ` (${service.priceLabel})` : ''}\nWhen: ${clientWhen}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nSee you soon! If you need to change or cancel, please call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
   };
   try {
     if (RESEND_API_KEY) await sendViaResend(mail);
@@ -962,7 +974,7 @@ async function sendRescheduleEmail(booking, service, oldDate, oldStartMinutes) {
     from: RESEND_API_KEY ? RESEND_FROM : gmailFrom,
     to: booking.email,
     subject: `Your ${SALON_NAME} appointment has been rescheduled — ${formatDate(booking.date)}`,
-    text: `Hi ${booking.name},\n\nYour appointment at ${SALON_NAME} has been rescheduled:\n\nService: ${service.name}${service.priceLabel ? ` (${service.priceLabel})` : ''}\nWas: ${oldWhen}\nNow: ${newWhen}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nSee you soon! If you need to change or cancel, please call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
+    text: `Hi ${firstNameOf(booking.name)},\n\nYour appointment at ${SALON_NAME} has been rescheduled:\n\nService: ${service.name}${service.priceLabel ? ` (${service.priceLabel})` : ''}\nWas: ${oldWhen}\nNow: ${newWhen}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nSee you soon! If you need to change or cancel, please call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
   };
   try {
     if (RESEND_API_KEY) await sendViaResend(mail);
@@ -983,7 +995,7 @@ async function sendCancelEmail(booking, service) {
     from: RESEND_API_KEY ? RESEND_FROM : gmailFrom,
     to: booking.email,
     subject: `Your ${SALON_NAME} appointment has been cancelled — ${formatDate(booking.date)}`,
-    text: `Hi ${booking.name},\n\nYour appointment at ${SALON_NAME} has been cancelled:\n\nService: ${service.name}${service.priceLabel ? ` (${service.priceLabel})` : ''}\nWhen: ${when}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nIf you'd like to book again, visit pxcutzz.com or call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
+    text: `Hi ${firstNameOf(booking.name)},\n\nYour appointment at ${SALON_NAME} has been cancelled:\n\nService: ${service.name}${service.priceLabel ? ` (${service.priceLabel})` : ''}\nWhen: ${when}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nIf you'd like to book again, visit pxcutzz.com or call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
   };
   try {
     if (RESEND_API_KEY) await sendViaResend(mail);
@@ -1034,7 +1046,7 @@ async function sendSms(to, body) {
 // dashboard. Fire-and-forget; failures are logged by sendSms.
 function sendMembershipWelcomeSms(name, phone, joinedDate) {
   const expiry = memberExpiryDate({ joinedDate });
-  const body = `PXCUTZZ: Hi ${name}, welcome to the membership! Your membership is active from ${formatDate(joinedDate)} to ${formatDate(expiry)} — 3 haircuts for $110. Book online at pxcutzz.com or call 6725882101.`;
+  const body = `PXCUTZZ: Hi ${firstNameOf(name)}, welcome to the membership! Your membership is active from ${formatDate(joinedDate)} to ${formatDate(expiry)} — 3 haircuts for $110. Book online at pxcutzz.com or call 6725882101.`;
   sendSms(phone, body).catch((e) => console.error('Membership welcome SMS failed:', e.message));
 }
 
@@ -1046,7 +1058,7 @@ function sendMembershipWelcomeSms(name, phone, joinedDate) {
 async function sendDashboardBookingSms(booking, service) {
   if (!booking.phone) return false;
   const when = `${formatDate(booking.date)} at ${minutesToTime(booking.startMinutes)} (${TZ})`;
-  const body = `PXCUTZZ: Hi ${booking.name}, your appointment is confirmed — ${service.name} on ${when}. See you soon! To change or cancel call 6725882101.`;
+  const body = `PXCUTZZ: Hi ${firstNameOf(booking.name)}, your appointment is confirmed — ${service.name} on ${when}. See you soon! To change or cancel call 6725882101.`;
   return sendSms(booking.phone, body);
 }
 
@@ -1649,7 +1661,7 @@ async function sendRenewalRemindersIfDue() {
     if (!memberFinished(m, bookings, today)) { skipped++; continue; }
     if (m.renewalReminderSent) { skipped++; continue; }
     if (!smsClient) { skipped++; continue; }
-    const body = `PXCUTZZ reminder: Hi ${m.name}, your membership has finished. Join your next membership — 3 haircuts for $110! Book online at pxcutzz.com or call 6725882101.`;
+    const body = `PXCUTZZ reminder: Hi ${firstNameOf(m.name)}, your membership has finished. Join your next membership — 3 haircuts for $110! Book online at pxcutzz.com or call 6725882101.`;
     const ok = await sendSms(m.phone, body);
     if (ok) {
       await store.updateMember(m.id, { renewalReminderSent: true });
@@ -1747,7 +1759,7 @@ app.post('/api/members/reminders/send-due', requireAdmin, async (req, res) => {
       // first haircut); if not, nudge them to book it below.
       if (m.joinedDate > today) {
         if (!smsClient) { skipped++; continue; }
-        const body = `PXCUTZZ reminder: Hi ${m.name}, your membership is starting tomorrow on ${formatDateShort(m.joinedDate)}. Please book your appointment accordingly — book online at pxcutzz.com or call 6725882101.`;
+        const body = `PXCUTZZ reminder: Hi ${firstNameOf(m.name)}, your membership is starting tomorrow on ${formatDateShort(m.joinedDate)}. Please book your appointment accordingly — book online at pxcutzz.com or call 6725882101.`;
         const ok = await sendSms(m.phone, body);
         if (ok) {
           await store.updateMember(m.id, { nextReminderDate: nextReminderOnGrid(m.joinedDate, today) });
@@ -1771,7 +1783,7 @@ app.post('/api/members/reminders/send-due', requireAdmin, async (req, res) => {
     // the day after that haircut, so by the time they are due the
     // booking is past and the nudge below is for the one after it.
     if (!smsClient) { skipped++; continue; }
-    const body = `PXCUTZZ reminder: Hi ${m.name}, it's time to book your next membership haircut! Book online at pxcutzz.com or call 6725882101.`;
+    const body = `PXCUTZZ reminder: Hi ${firstNameOf(m.name)}, it's time to book your next membership haircut! Book online at pxcutzz.com or call 6725882101.`;
     const ok = await sendSms(m.phone, body);
     if (ok) {
       await store.updateMember(m.id, { nextReminderDate: nextReminderOnGrid(m.joinedDate, today) });

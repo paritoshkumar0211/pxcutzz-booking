@@ -124,6 +124,10 @@ function initSqlite() {
     if (!cols.includes('reminder_3h_sent')) {
       db.exec('ALTER TABLE bookings ADD COLUMN reminder_3h_sent INTEGER NOT NULL DEFAULT 0');
     }
+    // Migration: 1-day-before email reminder flag. Same tolerance.
+    if (!cols.includes('email_reminder_sent')) {
+      db.exec('ALTER TABLE bookings ADD COLUMN email_reminder_sent INTEGER NOT NULL DEFAULT 0');
+    }
     // Migration: notes + blocked-slot flag ("Block this time" in the
     // owner dashboard). Same tolerance as above.
     if (!cols.includes('notes')) {
@@ -191,7 +195,7 @@ function initSqlite() {
       for (const [key, col] of Object.entries(map)) {
         if (f[key] !== undefined) { cols.push(`${col} = ?`); args.push(f[key]); }
       }
-      if (f.resetReminder) cols.push('reminder_sent = 0', 'reminder_3h_sent = 0');
+      if (f.resetReminder) cols.push('reminder_sent = 0', 'reminder_3h_sent = 0', 'email_reminder_sent = 0');
       if (cols.length) {
         args.push(id);
         db.prepare(`UPDATE bookings SET ${cols.join(', ')} WHERE id = ?`).run(...args);
@@ -200,6 +204,9 @@ function initSqlite() {
     },
     markEmailSent: (id) => {
       db.prepare('UPDATE bookings SET email_sent = 1 WHERE id = ?').run(id);
+    },
+    markEmailReminderSent: (id) => {
+      db.prepare('UPDATE bookings SET email_reminder_sent = 1 WHERE id = ?').run(id);
     },
     // Members ($110 for 3 haircuts) — the only clients who get the
     // 9-day reminder texts.
@@ -299,6 +306,10 @@ async function initTurso() {
   if (!names.includes('reminder_3h_sent')) {
     await client.execute('ALTER TABLE bookings ADD COLUMN reminder_3h_sent INTEGER NOT NULL DEFAULT 0');
   }
+  // Same 1-day-before email reminder migration as the SQLite store.
+  if (!names.includes('email_reminder_sent')) {
+    await client.execute('ALTER TABLE bookings ADD COLUMN email_reminder_sent INTEGER NOT NULL DEFAULT 0');
+  }
   // Same notes/blocked migration as the SQLite store.
   if (!names.includes('notes')) {
     await client.execute("ALTER TABLE bookings ADD COLUMN notes TEXT NOT NULL DEFAULT ''");
@@ -371,7 +382,7 @@ async function initTurso() {
       for (const [key, col] of Object.entries(map)) {
         if (f[key] !== undefined) { cols.push(`${col} = ?`); args.push(f[key]); }
       }
-      if (f.resetReminder) cols.push('reminder_sent = 0', 'reminder_3h_sent = 0');
+      if (f.resetReminder) cols.push('reminder_sent = 0', 'reminder_3h_sent = 0', 'email_reminder_sent = 0');
       if (cols.length) {
         args.push(id);
         await client.execute({ sql: `UPDATE bookings SET ${cols.join(', ')} WHERE id = ?`, args });
@@ -399,6 +410,9 @@ async function initTurso() {
     },
     markEmailSent: async (id) => {
       await client.execute({ sql: 'UPDATE bookings SET email_sent = 1 WHERE id = ?', args: [id] });
+    },
+    markEmailReminderSent: async (id) => {
+      await client.execute({ sql: 'UPDATE bookings SET email_reminder_sent = 1 WHERE id = ?', args: [id] });
     },
     // Members ($110 for 3 haircuts) — the only clients who get the
     // 9-day reminder texts.
@@ -499,7 +513,7 @@ function initJsonFallback() {
       for (const k of ['serviceId', 'serviceName', 'date', 'startMinutes', 'endMinutes', 'name', 'phone', 'email', 'notes']) {
         if (f[k] !== undefined) row[k] = f[k];
       }
-      if (f.resetReminder) { row.reminderSent = false; row.reminder3hSent = false; }
+      if (f.resetReminder) { row.reminderSent = false; row.reminder3hSent = false; row.emailReminderSent = false; }
       flush(); return row;
     },
     listDueReminders: (date) => rows
@@ -520,6 +534,10 @@ function initJsonFallback() {
     markEmailSent: (id) => {
       const row = rows.find((r) => r.id === Number(id));
       if (row) { row.emailSent = true; flush(); }
+    },
+    markEmailReminderSent: (id) => {
+      const row = rows.find((r) => r.id === Number(id));
+      if (row) { row.emailReminderSent = true; flush(); }
     },
     // Members ($110 for 3 haircuts) — the only clients who get the
     // 9-day reminder texts.
@@ -594,6 +612,7 @@ async function initStore() {
     listDue3hReminders: async (d, from, to) => (await raw.listDue3hReminders(d, from, to)).map(norm),
     markReminder3hSent: async (id) => { await raw.markReminder3hSent(id); },
     markEmailSent: async (id) => { await raw.markEmailSent(id); },
+    markEmailReminderSent: async (id) => { await raw.markEmailReminderSent(id); },
     listBlocked: async () => await raw.listBlocked(),
     isBlocked: async (d) => await raw.isBlocked(d),
     block: async (d) => { await raw.block(d); },
@@ -631,6 +650,7 @@ function norm(b) {
     blocked: !!(b.blocked ?? 0),
     emailSent: !!(b.email_sent ?? b.emailSent),
     reminderSent: !!(b.reminder_sent ?? b.reminderSent),
+    emailReminderSent: !!(b.email_reminder_sent ?? b.emailReminderSent),
     createdAt: b.created_at || b.createdAt,
   };
 }
@@ -882,6 +902,29 @@ async function sendBookingEmails(booking, service) {
   }
 }
 
+// 1-day-before reminder email (client only — the owner gets no booking
+// emails about reminders). Same style as the confirmation email:
+// start time only, and "please call" instead of "reply to this email".
+async function sendReminderEmail(booking, service) {
+  if (!emailIsConfigured()) return false;
+  const clientWhen = `${formatDate(booking.date)} at ${minutesToTime(booking.startMinutes)} (${TZ})`;
+  const gmailFrom = `"${SALON_NAME}" <${process.env.GMAIL_USER}>`;
+  const mail = {
+    from: RESEND_API_KEY ? RESEND_FROM : gmailFrom,
+    to: booking.email,
+    subject: `Reminder: your ${SALON_NAME} appointment is tomorrow — ${formatDate(booking.date)}`,
+    text: `Hi ${booking.name},\n\nThis is a reminder that your appointment at ${SALON_NAME} is tomorrow:\n\nService: ${service.name}${service.priceLabel ? ` (${service.priceLabel})` : ''}\nWhen: ${clientWhen}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nSee you soon! If you need to change or cancel, please call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
+  };
+  try {
+    if (RESEND_API_KEY) await sendViaResend(mail);
+    else await mailer.sendMail(mail);
+    return true;
+  } catch (e) {
+    console.error('Reminder email send failed:', e.message);
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // SMS via Twilio (optional — everything still works when not configured)
 // ---------------------------------------------------------------------------
@@ -958,6 +1001,7 @@ function publicBooking(b) {
     status: b.status, emailSent: !!b.emailSent,
     notes: b.notes || '', blocked: !!b.blocked,
     reminderSent: !!b.reminderSent,
+    emailReminderSent: !!b.emailReminderSent,
     createdAt: b.created_at || b.createdAt,
   };
 }
@@ -1214,6 +1258,32 @@ app.post('/api/reminders/send-due', requireAdmin, async (req, res) => {
     else failed3h++;
   }
   res.json({ date: tomorrow, sent, failed, skipped, today, sent3h, failed3h, skipped3h, smsConfigured: !!smsClient });
+});
+
+// 1-day-before reminder email. Admin-only; call once a day (e.g. 9 AM
+// from a scheduled job): clients with a confirmed appointment
+// tomorrow get one reminder email. The 3-hour reminder SMS is a
+// different job and is untouched; the 1-day-before SMS stays off.
+// Idempotent: a booking is flagged only after its email succeeds, so
+// a repeat call never double-emails anyone. An admin may pass
+// {"date": "YYYY-MM-DD"} to send for a different date (testing);
+// otherwise tomorrow is used.
+app.post('/api/reminders/send-due-email', requireAdmin, async (req, res) => {
+  const targetDate = isValidDate(req.body?.date) ? req.body.date : tomorrowInSalonTz();
+  let sent = 0, failed = 0, skipped = 0;
+  const bookings = await store.list();
+  const due = bookings.filter((b) =>
+    b.date === targetDate && b.status === 'confirmed' && !b.blocked
+    && b.email && !b.emailReminderSent);
+  for (const b of due) {
+    if (!emailIsConfigured()) { skipped++; continue; }
+    const service = SERVICES.find((s) => s.id === b.serviceId)
+      || { name: b.serviceName, priceLabel: '' };
+    const ok = await sendReminderEmail(b, service);
+    if (ok) { await store.markEmailReminderSent(b.id); sent++; }
+    else failed++;
+  }
+  res.json({ date: targetDate, sent, failed, skipped, emailConfigured: emailIsConfigured() });
 });
 
 // Send a test text to the owner to prove the SMS service works.

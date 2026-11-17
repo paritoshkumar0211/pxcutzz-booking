@@ -193,11 +193,9 @@ $('bookAnotherBtn').onclick = () => { $('bookingForm').reset(); setStep(1); };
 $('dateInput').addEventListener('change', () => {
   const input = $('dateInput');
   // Tuesdays are closed: the native date picker cannot grey them
-  // out, so a picked Tuesday is moved to the next open day.
-  if (input.value && isTuesday(input.value)) {
-    showError('The salon is closed on Tuesdays. Please pick another day.');
-    input.value = nextOpenDate(input.value);
-  }
+  // out, so a picked Tuesday is silently moved to the next open day
+  // — no message is shown (the owner does not want one).
+  if (input.value && isTuesday(input.value)) input.value = nextOpenDate(input.value);
   if (!$('stepTime').classList.contains('hidden')) loadSlots();
 });
 $('phoneInput').addEventListener('input', () => {

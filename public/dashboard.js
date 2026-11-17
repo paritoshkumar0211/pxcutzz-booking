@@ -342,15 +342,19 @@ function renderDayDetail() {
     if (b.blocked) tr.classList.add('row-blocked');
     tr.innerHTML = '<td></td><td></td><td></td><td></td><td></td>';
     const tds = tr.querySelectorAll('td');
-    // TIME: start time, with the service duration beneath it.
+    // TIME: start time, with the duration beneath it. A blocked row
+    // has no service — its length is the time it occupies.
     const timeEl = document.createElement('div');
     timeEl.textContent = b.time;
     tds[0].appendChild(timeEl);
     const svc = state.services.find((s) => s.id === b.serviceId);
-    if (svc) {
+    const durMin = b.blocked
+      ? (b.endMinutes ?? 0) - (b.startMinutes ?? 0)
+      : (svc ? svc.duration : 0);
+    if (durMin > 0) {
       const dur = document.createElement('div');
       dur.className = 'time-dur';
-      dur.textContent = `${svc.duration} min`;
+      dur.textContent = `${durMin} min`;
       tds[0].appendChild(dur);
     }
     // CUSTOMER (+ status tag for completed/cancelled/blocked rows).
@@ -626,6 +630,8 @@ function hideAddForm() {
 
 // "Block this time (no customer)": customer fields don't apply —
 // disable and grey them out, and the submit button says what it does.
+// Blocking needs a length, not a service — show the duration field
+// and hide the service picker.
 function syncBlockFields() {
   const blocked = $('addBlock').checked;
   [$('addName'), $('addPhone'), $('addEmail')].forEach((el) => {
@@ -635,16 +641,23 @@ function syncBlockFields() {
   $('addName').required = !blocked;
   $('addPhone').required = !blocked;
   $('addSubmitBtn').textContent = blocked ? 'Block this time' : 'Save booking';
+  $('addDurationRow').classList.toggle('hidden', !blocked);
+  $('addServiceRow').classList.toggle('hidden', blocked);
 }
 
 async function loadAddSlots() {
-  const serviceId = $('addService').value;
+  const blocked = $('addBlock').checked;
   const hint = $('addTimeHint');
   const grid = $('addSlotGrid');
   grid.innerHTML = '';
   hint.textContent = 'Loading times…';
   try {
-    const data = await api(`/api/slots?date=${encodeURIComponent(state.selectedDate)}&serviceId=${encodeURIComponent(serviceId)}`);
+    // Blocking a time: the slot grid is built for the duration the
+    // owner set, not for a service's length.
+    const qs = blocked
+      ? `duration=${encodeURIComponent($('addDuration').value)}`
+      : `serviceId=${encodeURIComponent($('addService').value)}`;
+    const data = await api(`/api/slots?date=${encodeURIComponent(state.selectedDate)}&${qs}`);
     if (data.closed || data.slots.length === 0) {
       hint.textContent = data.message || 'No times available on that day.';
       state.addSelectedTime = null;
@@ -671,6 +684,7 @@ function showAddForm() {
   $('addEmail').value = '';
   $('addNotes').value = '';
   $('addBlock').checked = false;
+  $('addDuration').value = '30';
   state.addSelectedTime = null;
   syncBlockFields();
   $('addBookingForm').classList.remove('hidden');
@@ -697,24 +711,27 @@ async function submitAddBooking(ev) {
   btn.textContent = 'Saving…';
   try {
     const email = $('addEmail').value.trim();
+    const body = {
+      date: state.selectedDate,
+      time: state.addSelectedTime,
+      name: blocked ? '' : $('addName').value.trim(),
+      phone: blocked ? '' : $('addPhone').value.trim(),
+      // Email is required by the booking API; when the owner leaves it
+      // blank we store a placeholder so no confirmation is attempted.
+      email: blocked ? '' : (email || 'no-email@pxcutzz.local'),
+      notes: $('addNotes').value.trim(),
+      blocked,
+    };
+    // A block has a duration the owner sets, not a service.
+    if (blocked) body.duration = Number($('addDuration').value);
+    else body.serviceId = $('addService').value;
     const res = await api('/api/bookings', {
       method: 'POST',
-      body: JSON.stringify({
-        serviceId: $('addService').value,
-        date: state.selectedDate,
-        time: state.addSelectedTime,
-        name: blocked ? '' : $('addName').value.trim(),
-        phone: blocked ? '' : $('addPhone').value.trim(),
-        // Email is required by the booking API; when the owner leaves it
-        // blank we store a placeholder so no confirmation is attempted.
-        email: blocked ? '' : (email || 'no-email@pxcutzz.local'),
-        notes: $('addNotes').value.trim(),
-        blocked,
-      }),
+      body: JSON.stringify(body),
     });
     const b = res.booking;
     ok.textContent = b.blocked
-      ? `Blocked: ${b.serviceName} on ${b.date} at ${b.time} — no customer, no confirmation sent.`
+      ? `Blocked ${b.endMinutes - b.startMinutes} min on ${b.date} at ${b.time} — no customer, no confirmation sent.`
       : `Booked: ${b.name} — ${b.serviceName} on ${b.date} at ${b.time}.`;
     ok.classList.remove('hidden');
     $('addName').value = '';
@@ -750,20 +767,24 @@ function hideEditForm() {
 async function loadEditSlots() {
   const id = $('editId').value;
   const original = state.bookings.find((b) => String(b.id) === String(id));
-  const serviceId = $('editService').value;
+  const blocked = !!(original && original.blocked);
   const date = $('editDate').value;
   const hint = $('editTimeHint');
   const grid = $('editSlotGrid');
   grid.innerHTML = '';
   hint.textContent = 'Loading times…';
   try {
-    const data = await api(`/api/slots?date=${encodeURIComponent(date)}&serviceId=${encodeURIComponent(serviceId)}`);
+    // A blocked row's grid is built for its duration, not a service's.
+    const qs = blocked
+      ? `duration=${encodeURIComponent($('editDuration').value)}`
+      : `serviceId=${encodeURIComponent($('editService').value)}`;
+    const data = await api(`/api/slots?date=${encodeURIComponent(date)}&${qs}`);
     hint.textContent = (data.closed || data.slots.length === 0) ? (data.message || 'No times available on that day.') : '';
     const times = data.slots.map((s) => s.time);
     // Keep the booking's current time selectable when the date and
     // service are unchanged — /api/slots excludes it as "taken" — but
     // never when that time is already past (past slots are never shown).
-    if (original && original.date === date && original.serviceId === serviceId
+    if (original && original.date === date && (blocked || original.serviceId === $('editService').value)
       && !times.includes(original.time) && !isPastSlot(date, original.time)) {
       times.unshift(original.time);
     }
@@ -781,8 +802,15 @@ async function loadEditSlots() {
 function showEditForm(b) {
   hideAddForm();
   $('editId').value = b.id;
-  $('editNameLabel').textContent = b.blocked ? `Blocked time — ${b.serviceName}` : b.name;
-  $('editService').value = b.serviceId;
+  $('editNameLabel').textContent = b.blocked ? 'Blocked time' : b.name;
+  // A blocked slot has a duration, not a service — show the duration
+  // field (with the length it already has) and hide the service picker.
+  const blocked = !!b.blocked;
+  state.editBlocked = blocked;
+  $('editServiceRow').classList.toggle('hidden', blocked);
+  $('editDurationRow').classList.toggle('hidden', !blocked);
+  if (blocked) $('editDuration').value = (b.endMinutes ?? 0) - (b.startMinutes ?? 0) || 30;
+  else $('editService').value = b.serviceId;
   $('editDate').value = b.date;
   $('editName').value = b.name;
   $('editPhone').value = b.phone;
@@ -818,17 +846,20 @@ async function submitEditBooking(ev) {
   btn.disabled = true;
   btn.textContent = 'Saving…';
   try {
+    const body = {
+      date: $('editDate').value,
+      time: state.editSelectedTime,
+      name: $('editName').value.trim(),
+      phone: $('editPhone').value.trim(),
+      email: $('editEmail').value.trim() || 'no-email@pxcutzz.local',
+      notes: $('editNotes').value.trim(),
+    };
+    // A blocked row keeps its duration, not a service.
+    if (state.editBlocked) body.duration = Number($('editDuration').value);
+    else body.serviceId = $('editService').value;
     const updated = await api(`/api/bookings/${$('editId').value}`, {
       method: 'PUT',
-      body: JSON.stringify({
-        serviceId: $('editService').value,
-        date: $('editDate').value,
-        time: state.editSelectedTime,
-        name: $('editName').value.trim(),
-        phone: $('editPhone').value.trim(),
-        email: $('editEmail').value.trim() || 'no-email@pxcutzz.local',
-        notes: $('editNotes').value.trim(),
-      }),
+      body: JSON.stringify(body),
     });
     state.bookings = await api('/api/bookings');
     // If the booking moved to another day, jump the view to that day.
@@ -864,10 +895,12 @@ $('addBookingBtn').onclick = showAddForm;
 $('cancelAddBtn').onclick = hideAddForm;
 $('addBookingForm').addEventListener('submit', submitAddBooking);
 $('addService').addEventListener('change', loadAddSlots);
-$('addBlock').addEventListener('change', syncBlockFields);
+$('addBlock').addEventListener('change', () => { syncBlockFields(); loadAddSlots(); });
+$('addDuration').addEventListener('change', () => { if ($('addBlock').checked) loadAddSlots(); });
 $('cancelEditBtn').onclick = hideEditForm;
 $('editBookingForm').addEventListener('submit', submitEditBooking);
 $('editService').addEventListener('change', loadEditSlots);
+$('editDuration').addEventListener('change', loadEditSlots);
 $('editDate').addEventListener('change', loadEditSlots);
 $('dashUnlockBtn').onclick = unlockDashboard;
 $('dashTokenInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') unlockDashboard(); });

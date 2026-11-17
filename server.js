@@ -1554,6 +1554,18 @@ app.post('/api/members/:id/deactivate', requireAdmin, async (req, res) => {
   res.json(member);
 });
 
+// Set a member's next reminder date (owner). Used when the owner
+// wants a member reminded on a specific day instead of the 9-day
+// grid — e.g. their next haircut is already booked, so the reminder
+// should wait until the day after it.
+app.post('/api/members/:id/next-reminder', requireAdmin, async (req, res) => {
+  const { date } = req.body || {};
+  if (!isValidDate(date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD.' });
+  const member = await store.updateMember(req.params.id, { nextReminderDate: date });
+  if (!member) return res.status(404).json({ error: 'Member not found.' });
+  res.json(member);
+});
+
 // Restart a member: a new membership cycle starting today (join date
 // today, first reminder 9 days later, haircut count restarts, and the
 // renewal reminder becomes due again when this cycle finishes).

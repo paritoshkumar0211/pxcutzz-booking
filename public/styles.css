@@ -61,6 +61,7 @@ form label { display:block; font-weight:600; font-size:14px; }
 .slot.selected { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:700; }
 .alert { border-radius:10px; padding:12px 14px; margin:12px 0; }
 .alert.error { background:#fef2f2; border:1px solid #fecaca; color:#991b1b; }
+.alert.warn { background:#fffbeb; border:1px solid #fcd34d; color:#92400e; }
 .hidden { display:none; }
 .confirmation { text-align:left; }
 .confirmation h3 { color:var(--ok); margin-top:0; }

@@ -1247,6 +1247,23 @@ app.delete('/api/blocked-days/:date', requireAdmin, async (req, res) => {
 
 // Membership ($110 for 3 haircuts) — owner-only. Members are the ONLY
 // clients who get the 9-day reminder texts; other clients never do.
+// Public membership check for the booking form: does this phone belong
+// to someone with an active, unfinished membership? Returns only
+// true/false — never the member's name or details — so the booking
+// form can hide the "Join membership" option for people who are
+// already members. A finished, expired or stopped member still sees
+// the option, so they can join the next membership.
+app.get('/api/members/check', async (req, res) => {
+  const phone = normalizePhone(req.query.phone || '');
+  if (!phone) return res.json({ isMember: false });
+  const today = todayInSalonTz();
+  const members = await store.listMembers();
+  const bookings = await store.list();
+  const isMember = members.some((m) =>
+    normalizePhone(m.phone) === phone && m.active && !memberFinished(m, bookings, today));
+  res.json({ isMember });
+});
+
 app.get('/api/members', requireAdmin, async (req, res) => {
   const today = todayInSalonTz();
   const members = await store.listMembers();

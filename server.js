@@ -1705,8 +1705,8 @@ function effectiveNextReminder(member, bookings, today) {
 // from their join date, so a repeat call never double-texts and a late
 // send never drifts the schedule. A brand-new member (0 haircuts
 // done) is reminded the day BEFORE their membership starts — "your
-// membership starts tomorrow, please book your time" — because the
-// join date is the start date and it can be in the future. Once they
+// membership is starting on [date], please book your time" — because
+// the join date is the start date and it can be in the future. Once they
 // book a time, the 3-hour appointment reminder (a different job) and
 // the 1-day-before email cover the appointment itself, and the 9-day
 // rule only starts after their first haircut. A member who already
@@ -1734,7 +1734,7 @@ app.post('/api/members/reminders/send-due', requireAdmin, async (req, res) => {
       // the 1-day-before email cover the appointment itself, and the
       // 9-day rule starts after their first haircut.
       if (!smsClient) { skipped++; continue; }
-      const body = `PXCUTZZ reminder: Hi ${m.name}, your membership starts tomorrow (${formatDate(m.joinedDate)}). Please book your time — book online at pxcutzz.com or call 6725882101.`;
+      const body = `PXCUTZZ reminder: Hi ${m.name}, your membership is starting on ${formatDate(m.joinedDate)}. Please book your time — book online at pxcutzz.com or call 6725882101.`;
       const ok = await sendSms(m.phone, body);
       if (ok) {
         await store.updateMember(m.id, { nextReminderDate: nextReminderOnGrid(m.joinedDate, today) });

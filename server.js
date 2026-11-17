@@ -1735,21 +1735,35 @@ app.post('/api/members/reminders/send-due', requireAdmin, async (req, res) => {
     if (effectiveNextReminder(m, bookings, today) > today) { skipped++; continue; }
     const done = haircutsUsed(m, bookings, today);
     if (done === 0) {
-      // Brand-new member: the reminder is the day before their
-      // membership starts, telling them to book their time. The
-      // membership start (join date) can be in the future — e.g. a
-      // member joining Nov 21 is reminded Nov 20. Once they book a
-      // time, the 3-hour appointment reminder (a different job) and
-      // the 1-day-before email cover the appointment itself, and the
-      // 9-day rule starts after their first haircut.
-      if (!smsClient) { skipped++; continue; }
-      const body = `PXCUTZZ reminder: Hi ${m.name}, your membership is starting tomorrow on ${formatDateShort(m.joinedDate)}. Please book your appointment accordingly — book online at pxcutzz.com or call 6725882101.`;
-      const ok = await sendSms(m.phone, body);
-      if (ok) {
-        await store.updateMember(m.id, { nextReminderDate: nextReminderOnGrid(m.joinedDate, today) });
-        sent++;
-      } else failed++;
-      continue;
+      // Brand-new member. If the membership starts in the future,
+      // the reminder is the day before it starts ("your membership
+      // is starting tomorrow on [date], please book your appointment
+      // accordingly"). If the membership already started (join date
+      // today or past — e.g. a client who joined while booking
+      // online), there is no "starting tomorrow" to announce: if
+      // they already have a first appointment booked, wait until 9
+      // days after it (the appointment reminders cover the
+      // appointment itself, and the 9-day rule starts after their
+      // first haircut); if not, nudge them to book it below.
+      if (m.joinedDate > today) {
+        if (!smsClient) { skipped++; continue; }
+        const body = `PXCUTZZ reminder: Hi ${m.name}, your membership is starting tomorrow on ${formatDateShort(m.joinedDate)}. Please book your appointment accordingly — book online at pxcutzz.com or call 6725882101.`;
+        const ok = await sendSms(m.phone, body);
+        if (ok) {
+          await store.updateMember(m.id, { nextReminderDate: nextReminderOnGrid(m.joinedDate, today) });
+          sent++;
+        } else failed++;
+        continue;
+      }
+      const latestUpcoming = latestUpcomingHaircut(m, bookings, today);
+      if (latestUpcoming) {
+        await store.updateMember(m.id, { nextReminderDate: addDays(latestUpcoming, MEMBERSHIP_REMINDER_DAYS) });
+        skippedAlreadyBooked++;
+        skipped++;
+        continue;
+      }
+      // No appointment booked yet: the usual "book your first
+      // haircut" nudge below.
     }
     // A member who already had a haircut and has the next one booked
     // in advance needs no "book your appointment" text — the

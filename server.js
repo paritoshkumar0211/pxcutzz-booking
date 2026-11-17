@@ -1574,6 +1574,32 @@ app.post('/api/members/:id/next-reminder', requireAdmin, async (req, res) => {
   res.json(member);
 });
 
+// Correct a member's join date (owner). The membership month — and so
+// the expiry date — follows the join date, and the next reminder is
+// recomputed the same way as when the member was added: 9 days after
+// their last haircut (haircuts ~10 days apart from the join date), or
+// tomorrow when that date is already past, and the day after their
+// latest upcoming haircut when one is already booked.
+app.post('/api/members/:id/joined-date', requireAdmin, async (req, res) => {
+  const { date } = req.body || {};
+  if (!isValidDate(date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD.' });
+  const members = await store.listMembers();
+  const member = members.find((m) => String(m.id) === String(req.params.id));
+  if (!member) return res.status(404).json({ error: 'Member not found.' });
+  const today = todayInSalonTz();
+  const prior = member.priorHaircuts ?? 0;
+  const lastHaircut = prior > 0 ? addDays(date, 10 * (prior - 1)) : date;
+  let nextReminderDate = addDays(lastHaircut, MEMBERSHIP_REMINDER_DAYS);
+  if (nextReminderDate <= today) nextReminderDate = addDays(today, 1);
+  const bookings = await store.list();
+  const latestUpcoming = latestUpcomingHaircut({ phone: member.phone, joinedDate: date }, bookings, today);
+  if (latestUpcoming && nextReminderDate <= latestUpcoming) {
+    nextReminderDate = addDays(latestUpcoming, 1);
+  }
+  const updated = await store.updateMember(member.id, { joinedDate: date, nextReminderDate });
+  res.json(updated);
+});
+
 // Restart a member: a new membership cycle starting today (join date
 // today, first reminder 9 days later, haircut count restarts, and the
 // renewal reminder becomes due again when this cycle finishes).

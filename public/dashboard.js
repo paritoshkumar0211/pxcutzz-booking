@@ -732,7 +732,7 @@ async function submitAddBooking(ev) {
     const b = res.booking;
     ok.textContent = b.blocked
       ? `Blocked ${b.endMinutes - b.startMinutes} min on ${b.date} at ${b.time} — no customer, no confirmation sent.`
-      : `Booked: ${b.name} — ${b.serviceName} on ${b.date} at ${b.time}.`;
+      : `Booked: ${b.name} — ${b.serviceName} on ${b.date} at ${b.time}.` + (res.smsSent ? ' Confirmation text sent.' : ' (Confirmation text could not be sent — the client will still get the 3-hour reminder.)');
     ok.classList.remove('hidden');
     $('addName').value = '';
     $('addPhone').value = '';

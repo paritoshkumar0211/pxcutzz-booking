@@ -236,6 +236,40 @@ function normalizePhone(p) {
   const digits = String(p || '').replace(/\D/g, '');
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
+// Same-name, different-number warning. The owner has several clients
+// who share a name, and the system tells people apart ONLY by phone
+// number (last 10 digits) — the name is never used to match anyone.
+// When the name typed in a form matches an existing member or booking
+// but the number is different, list the existing numbers so the owner
+// can check he typed the right one before saving: a wrong number
+// links the booking or membership to the wrong person. Non-blocking —
+// same names are normal here, so this is a nudge, not an error.
+function sameNameMatches(name, phone) {
+  const want = (name || '').trim().toLowerCase();
+  if (!want) return [];
+  const num = normalizePhone(phone);
+  const seen = new Map();
+  const add = (n, p) => {
+    if (!n || !p) return;
+    if (n.trim().toLowerCase() !== want) return;
+    const key = normalizePhone(p);
+    if (!key) return;
+    if (num && key === num) return; // same person — no warning
+    if (!seen.has(key)) seen.set(key, { name: n.trim(), phone: p });
+  };
+  (state.members || []).forEach((m) => add(m.name, m.phone));
+  (state.bookings || []).forEach((b) => { if (!b.blocked) add(b.name, b.phone); });
+  return [...seen.values()];
+}
+function showSameNameWarning(el, name, phone) {
+  if (!el) return;
+  const matches = sameNameMatches(name, phone);
+  if (!matches.length) { el.classList.add('hidden'); el.textContent = ''; return; }
+  el.textContent = '⚠️ Same name, different number: '
+    + matches.map((m) => `${m.name} — ${m.phone}`).join(' · ')
+    + '. Check the number before saving — the system tells people apart by number only.';
+  el.classList.remove('hidden');
+}
 // Is this booking one of the member's 3 membership haircuts? It counts
 // when the client is an active member, the service is a haircut, the
 // date is inside the membership month, and the booking is among the
@@ -552,6 +586,8 @@ $('addMemberForm').addEventListener('submit', async (ev) => {
     $('addMemberPhone').value = '';
     $('addMemberJoined').value = '';
     $('addMemberPrior').value = '0';
+    const w = $('addMemberNameWarn');
+    if (w) { w.classList.add('hidden'); w.textContent = ''; }
     ok.textContent = `${name} is now a member — first reminder goes in 9 days.`;
     ok.classList.remove('hidden');
     await reloadMembers();
@@ -624,6 +660,8 @@ function hideAddForm() {
   $('addBookingForm').classList.add('hidden');
   $('addSuccess').classList.add('hidden');
   $('addError').classList.add('hidden');
+  const w = $('addNameWarn');
+  if (w) { w.classList.add('hidden'); w.textContent = ''; }
   $('addBookingBtn').classList.remove('hidden');
   hideEditForm();
 }
@@ -689,6 +727,8 @@ function showAddForm() {
   syncBlockFields();
   $('addBookingForm').classList.remove('hidden');
   $('addSuccess').classList.add('hidden');
+  const w = $('addNameWarn');
+  if (w) { w.classList.add('hidden'); w.textContent = ''; }
   $('addError').classList.add('hidden');
   loadAddSlots();
   $('addBookingForm').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -762,6 +802,8 @@ function hideEditForm() {
   $('editBookingForm').classList.add('hidden');
   $('editSuccess').classList.add('hidden');
   $('editError').classList.add('hidden');
+  const w = $('editNameWarn');
+  if (w) { w.classList.add('hidden'); w.textContent = ''; }
 }
 
 async function loadEditSlots() {
@@ -827,6 +869,9 @@ function showEditForm(b) {
   $('editBookingForm').classList.remove('hidden');
   $('editSuccess').classList.add('hidden');
   $('editError').classList.add('hidden');
+  // Same-name check on the pre-filled details (warns if another client
+  // shares this name under a different number).
+  showSameNameWarning($('editNameWarn'), $('editName').value, $('editPhone').value);
   loadEditSlots();
   $('editBookingForm').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
@@ -904,5 +949,16 @@ $('editDuration').addEventListener('change', loadEditSlots);
 $('editDate').addEventListener('change', loadEditSlots);
 $('dashUnlockBtn').onclick = unlockDashboard;
 $('dashTokenInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') unlockDashboard(); });
+// Same-name warning: as the owner types a name or number in any form,
+// show the numbers of existing clients with that name (if different).
+const warnAdd = () => showSameNameWarning($('addNameWarn'), $('addName').value, $('addPhone').value);
+const warnEdit = () => showSameNameWarning($('editNameWarn'), $('editName').value, $('editPhone').value);
+const warnMember = () => showSameNameWarning($('addMemberNameWarn'), $('addMemberName').value, $('addMemberPhone').value);
+$('addName').addEventListener('input', warnAdd);
+$('addPhone').addEventListener('input', warnAdd);
+$('editName').addEventListener('input', warnEdit);
+$('editPhone').addEventListener('input', warnEdit);
+$('addMemberName').addEventListener('input', warnMember);
+$('addMemberPhone').addEventListener('input', warnMember);
 
 loadAll();

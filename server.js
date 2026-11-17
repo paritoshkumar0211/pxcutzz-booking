@@ -1200,24 +1200,17 @@ app.post('/api/bookings', async (req, res) => {
     });
   }
   // Membership join: a client ticking "Join membership" while booking
-  // is recorded as a member (join date = today). A phone number that
-  // is already a member is kept as-is — no duplicate member, no
-  // restarted reminder cycle. A brand-new member whose first
-  // appointment is in the future is reminded the day before it (an
-  // appointment reminder); otherwise the first reminder is 9 days
-  // after joining, and the 9-day rule starts after their first
-  // haircut.
+  // is recorded as a member (join date = today, first reminder 9 days
+  // later). A phone number that is already a member is kept as-is —
+  // no duplicate member, no restarted reminder cycle.
   let membershipJoined = false;
   if (joinMembership) {
     const existing = await store.findMemberByPhone(saved.phone);
     if (!existing) {
       const today = todayInSalonTz();
-      const firstReminder = saved.date > today
-        ? addDays(saved.date, -1)
-        : addDays(today, MEMBERSHIP_REMINDER_DAYS);
       await store.insertMember({
         name: saved.name, phone: saved.phone, email: saved.email,
-        joinedDate: today, nextReminderDate: firstReminder,
+        joinedDate: today, nextReminderDate: addDays(today, MEMBERSHIP_REMINDER_DAYS),
         // Created at the same moment as the booking, so this booking
         // counts as the member's first haircut once its day arrives
         // (see haircutsUsed — future appointments don't count yet).
@@ -1512,32 +1505,37 @@ app.post('/api/members', requireAdmin, async (req, res) => {
   const today = todayInSalonTz();
   // Haircuts already done before the member was added (old clients).
   const prior = Math.min(3, Math.max(0, parseInt(priorHaircuts, 10) || 0));
-  // First reminder is 9 days after the member's LAST haircut — not 9
-  // days after joining. A new member (no haircuts yet) is reminded 9
-  // days after joining. An old client added with haircuts already done
-  // had them about 10 days apart (3 haircuts in a month, starting on
-  // the join date), so with `d` done the last one was on join +
-  // 10*(d-1) and the next reminder is 9 days after that. That is why
-  // (joined Nov 1, 2 done) reminds on Nov 20, not Nov 10 or Nov 19:
-  // last haircut Nov 11, + 9 days = Nov 20, and the next haircut
-  // follows the day after (Nov 21). For 1 done this is just join + 9,
-  // the same as a new member. If that date is already today or in the
-  // past, it is tomorrow, so the member is reminded right away instead
-  // of the dashboard showing a past date.
+  // First reminder: a brand-new member (0 haircuts done) is reminded
+  // the day BEFORE their membership starts — the join date is the
+  // start date and it can be in the future (e.g. joining Nov 21 is
+  // reminded Nov 20), so they can book their time. An old client
+  // added with haircuts already done is reminded 9 days after their
+  // LAST haircut — not 9 days after joining. They had them about 10
+  // days apart (3 haircuts in a month, starting on the join date), so
+  // with `d` done the last one was on join + 10*(d-1) and the next
+  // reminder is 9 days after that. That is why (joined Nov 1, 2 done)
+  // reminds on Nov 20, not Nov 10 or Nov 19: last haircut Nov 11, +
+  // 9 days = Nov 20, and the next haircut follows the day after
+  // (Nov 21). For 1 done this is just join + 9. If the computed date
+  // is already today or in the past, it is tomorrow, so the member is
+  // reminded right away instead of the dashboard showing a past date.
   const lastHaircut = prior > 0 ? addDays(joined, 10 * (prior - 1)) : joined;
   const firstReminder = addDays(lastHaircut, MEMBERSHIP_REMINDER_DAYS);
   let nextReminderDate = firstReminder > today ? firstReminder : addDays(today, 1);
-  // Already has a haircut booked in advance? For a brand-new member
-  // (0 haircuts done) the first reminder is the day BEFORE their
-  // first appointment — they are reminded of the appointment itself.
-  // For a member who already had a haircut, the first reminder is
-  // the day after that haircut, not join date + 9 — no point nudging
-  // someone to book when their next haircut is already on the books
-  // (and the send-due would only skip that date and move it anyway).
+  // A brand-new member (0 haircuts done) is reminded the day BEFORE
+  // their membership starts, so they can book their time — the join
+  // date is the start date, and it can be in the future (e.g. a
+  // member joining Nov 21 is reminded Nov 20 that the membership
+  // starts tomorrow and they should book a time). For a member who
+  // already had a haircut and has the next one booked in advance, the
+  // first reminder is the day after that haircut, not join date + 9
+  // — no point nudging someone to book when their next haircut is
+  // already on the books (and the send-due would only skip that date
+  // and move it anyway).
   const bookings = await store.list();
   if (prior === 0) {
-    const first = firstUpcomingHaircut({ phone, joinedDate: joined }, bookings, today);
-    if (first) nextReminderDate = addDays(first.date, -1);
+    const startReminder = addDays(joined, -1);
+    nextReminderDate = startReminder > today ? startReminder : addDays(today, 1);
   } else {
     const latestUpcoming = latestUpcomingHaircut({ phone, joinedDate: joined }, bookings, today);
     if (latestUpcoming && nextReminderDate <= latestUpcoming) {
@@ -1601,10 +1599,9 @@ app.post('/api/members/:id/joined-date', requireAdmin, async (req, res) => {
   if (nextReminderDate <= today) nextReminderDate = addDays(today, 1);
   const bookings = await store.list();
   if (prior === 0) {
-    // Brand-new member with a first appointment booked: the day
-    // before that appointment.
-    const first = firstUpcomingHaircut({ phone: member.phone, joinedDate: date }, bookings, today);
-    if (first) nextReminderDate = addDays(first.date, -1);
+    // Brand-new member: the day before the membership starts.
+    const startReminder = addDays(date, -1);
+    nextReminderDate = startReminder > today ? startReminder : addDays(today, 1);
   } else {
     const latestUpcoming = latestUpcomingHaircut({ phone: member.phone, joinedDate: date }, bookings, today);
     if (latestUpcoming && nextReminderDate <= latestUpcoming) {
@@ -1681,40 +1678,20 @@ function latestUpcomingHaircut(member, bookings, today) {
   return upcomingDates.length ? upcomingDates.sort().pop() : null;
 }
 
-// The member's FIRST upcoming haircut booking inside the membership
-// month (confirmed, not blocked, date after today) — the full booking
-// row, or null when they have none. A brand-new member (0 haircuts
-// done) with a first appointment booked is reminded the day BEFORE
-// that appointment, not 9 days after joining — so they are reminded
-// of the appointment itself, and the 9-day rule only starts after
-// they have had their first haircut.
-function firstUpcomingHaircut(member, bookings, today) {
-  const memberPhone = normalizePhone(member.phone);
-  const upcoming = bookings
-    .filter((b) => normalizePhone(b.phone) === memberPhone
-      && HAIRCUT_SERVICE_IDS.includes(b.serviceId)
-      && b.status !== 'cancelled' && !b.blocked
-      && b.date > today && b.date <= memberExpiryDate(member))
-    .sort((a, b) => a.date.localeCompare(b.date));
-  return upcoming.length ? upcoming[0] : null;
-}
-
-// The reminder date the member will actually be nudged on. For a
-// brand-new member (0 haircuts done) with a first appointment booked,
-// the day BEFORE that appointment. For a member with a haircut booked
-// in advance, the day after it (the send-due would only skip the
-// stored date and move it anyway). Otherwise the stored date. The
-// dashboard list and the send-due both use this, so what the owner
-// sees is what will actually go out.
+// The reminder date the member will actually be nudged on. A
+// brand-new member (0 haircuts done) is reminded the day before
+// their membership starts — that date is stored when the member is
+// added (or when the join date is corrected), so the stored value is
+// already right. A member with a haircut booked in advance is
+// reminded the day after it (the send-due would only skip the stored
+// date and move it anyway). Otherwise the stored date. The dashboard
+// list and the send-due both use this, so what the owner sees is
+// what will actually go out.
 function effectiveNextReminder(member, bookings, today) {
   const next = member.nextReminderDate;
   if (!member.active || memberFinished(member, bookings, today)) return next;
   const done = haircutsUsed(member, bookings, today);
-  if (done === 0) {
-    const first = firstUpcomingHaircut(member, bookings, today);
-    if (first) return addDays(first.date, -1);
-    return next;
-  }
+  if (done === 0) return next;
   const latestUpcoming = latestUpcomingHaircut(member, bookings, today);
   if (latestUpcoming && next <= latestUpcoming) return addDays(latestUpcoming, 1);
   return next;
@@ -1727,16 +1704,17 @@ function effectiveNextReminder(member, bookings, today) {
 // out, the next reminder is the next date on the member's 9-day grid
 // from their join date, so a repeat call never double-texts and a late
 // send never drifts the schedule. A brand-new member (0 haircuts
-// done) with a first appointment booked is reminded the day BEFORE
-// that appointment — an appointment reminder, not the "book your
-// next haircut" nudge — and the 9-day rule only starts after their
-// first haircut. A member who already had a haircut and has the next
-// one booked in advance gets NO "book your appointment" text — the
-// reminder waits until the day after their latest upcoming haircut,
-// so they are nudged to book the one after that. (The 3-hour
-// appointment reminder is a different job and still goes out.) The
-// same call also sends the one-time renewal reminder to members whose
-// membership has finished.
+// done) is reminded the day BEFORE their membership starts — "your
+// membership starts tomorrow, please book your time" — because the
+// join date is the start date and it can be in the future. Once they
+// book a time, the 3-hour appointment reminder (a different job) and
+// the 1-day-before email cover the appointment itself, and the 9-day
+// rule only starts after their first haircut. A member who already
+// had a haircut and has the next one booked in advance gets NO "book
+// your appointment" text — the reminder waits until the day after
+// their latest upcoming haircut, so they are nudged to book the one
+// after that. The same call also sends the one-time renewal reminder
+// to members whose membership has finished.
 app.post('/api/members/reminders/send-due', requireAdmin, async (req, res) => {
   const today = todayInSalonTz();
   const members = await store.listMembers();
@@ -1748,21 +1726,21 @@ app.post('/api/members/reminders/send-due', requireAdmin, async (req, res) => {
     if (effectiveNextReminder(m, bookings, today) > today) { skipped++; continue; }
     const done = haircutsUsed(m, bookings, today);
     if (done === 0) {
-      // Brand-new member: if their first appointment is booked, the
-      // reminder is an appointment reminder the day before it.
-      const first = firstUpcomingHaircut(m, bookings, today);
-      if (first) {
-        if (!smsClient) { skipped++; continue; }
-        const body = `PXCUTZZ reminder: Hi ${m.name}, your ${first.serviceName} appointment is tomorrow (${first.date}) at ${first.time}. See you soon! To change or cancel call 6725882101.`;
-        const ok = await sendSms(m.phone, body);
-        if (ok) {
-          await store.updateMember(m.id, { nextReminderDate: nextReminderOnGrid(m.joinedDate, today) });
-          sent++;
-        } else failed++;
-        continue;
-      }
-      // No appointment booked yet: the usual "book your first
-      // haircut" nudge below.
+      // Brand-new member: the reminder is the day before their
+      // membership starts, telling them to book their time. The
+      // membership start (join date) can be in the future — e.g. a
+      // member joining Nov 21 is reminded Nov 20. Once they book a
+      // time, the 3-hour appointment reminder (a different job) and
+      // the 1-day-before email cover the appointment itself, and the
+      // 9-day rule starts after their first haircut.
+      if (!smsClient) { skipped++; continue; }
+      const body = `PXCUTZZ reminder: Hi ${m.name}, your membership starts tomorrow (${formatDate(m.joinedDate)}). Please book your time — book online at pxcutzz.com or call 6725882101.`;
+      const ok = await sendSms(m.phone, body);
+      if (ok) {
+        await store.updateMember(m.id, { nextReminderDate: nextReminderOnGrid(m.joinedDate, today) });
+        sent++;
+      } else failed++;
+      continue;
     }
     // A member who already had a haircut and has the next one booked
     // in advance needs no "book your appointment" text — the

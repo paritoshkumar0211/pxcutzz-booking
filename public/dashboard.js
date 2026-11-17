@@ -200,7 +200,7 @@ function renderCalendar() {
     if (isClosedDay) {
       const lbl = document.createElement('span');
       lbl.className = 'cal-closed';
-      lbl.textContent = 'closed';
+      lbl.textContent = 'Tue closed';
       cell.appendChild(lbl);
     } else if (state.blocked.has(ds)) {
       const lbl = document.createElement('span');

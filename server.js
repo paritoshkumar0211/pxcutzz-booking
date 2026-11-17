@@ -1480,12 +1480,28 @@ app.get('/api/members', requireAdmin, async (req, res) => {
   const today = todayInSalonTz();
   const members = await store.listMembers();
   const bookings = await store.list();
-  res.json(members.map((m) => ({
-    ...m,
-    haircutsUsed: haircutsUsed(m, bookings, today),
-    expiryDate: memberExpiryDate(m),
-    finishedReason: memberFinishedReason(m, bookings, today),
-  })));
+  res.json(members.map((m) => {
+    const finishedReason = memberFinishedReason(m, bookings, today);
+    // The dashboard shows when the member will actually be nudged
+    // next: if they already have a haircut booked in advance, the
+    // reminder waits until the day after it (the same rule the
+    // send-due applies) instead of showing a date that will only be
+    // skipped when the day comes.
+    let nextReminderDate = m.nextReminderDate;
+    if (m.active && !finishedReason) {
+      const latestUpcoming = latestUpcomingHaircut(m, bookings, today);
+      if (latestUpcoming && nextReminderDate <= latestUpcoming) {
+        nextReminderDate = addDays(latestUpcoming, 1);
+      }
+    }
+    return {
+      ...m,
+      nextReminderDate,
+      haircutsUsed: haircutsUsed(m, bookings, today),
+      expiryDate: memberExpiryDate(m),
+      finishedReason,
+    };
+  }));
 });
 
 app.post('/api/members', requireAdmin, async (req, res) => {
@@ -1500,7 +1516,16 @@ app.post('/api/members', requireAdmin, async (req, res) => {
   // right away instead of the dashboard showing a past date and the
   // catch-up send pushing their next haircut into the last 10 days.
   const firstReminder = addDays(joined, MEMBERSHIP_REMINDER_DAYS);
-  const nextReminderDate = firstReminder > today ? firstReminder : addDays(today, 1);
+  let nextReminderDate = firstReminder > today ? firstReminder : addDays(today, 1);
+  // Already has a haircut booked in advance? The first reminder is
+  // the day after that haircut, not join date + 9 — no point nudging
+  // someone to book when their next haircut is already on the books
+  // (and the send-due would only skip that date and move it anyway).
+  const bookings = await store.list();
+  const latestUpcoming = latestUpcomingHaircut({ phone, joinedDate: joined }, bookings, today);
+  if (latestUpcoming && nextReminderDate <= latestUpcoming) {
+    nextReminderDate = addDays(latestUpcoming, 1);
+  }
   // Haircuts already done before the member was added (old clients).
   const prior = Math.min(3, Math.max(0, parseInt(priorHaircuts, 10) || 0));
   const existing = await store.findMemberByPhone(phone);
@@ -1579,6 +1604,22 @@ function nextReminderOnGrid(joinedDate, today) {
   return next;
 }
 
+// The member's latest upcoming haircut booking inside the membership
+// month (confirmed, not blocked, date from today to expiry) — or null
+// when they have none booked in advance. A member with a haircut
+// already coming needs no "book your appointment" nudge until after
+// that haircut, so their next reminder is the day after this date.
+function latestUpcomingHaircut(member, bookings, today) {
+  const memberPhone = normalizePhone(member.phone);
+  const upcomingDates = bookings
+    .filter((b) => normalizePhone(b.phone) === memberPhone
+      && HAIRCUT_SERVICE_IDS.includes(b.serviceId)
+      && b.status !== 'cancelled' && !b.blocked
+      && b.date >= today && b.date <= memberExpiryDate(member))
+    .map((b) => b.date);
+  return upcomingDates.length ? upcomingDates.sort().pop() : null;
+}
+
 // Membership reminders — every 9 days after joining, ONLY to members.
 // Admin-only; call once a day from a scheduled job. A member is due
 // when active, not finished (3 haircuts used or the month ran out),
@@ -1605,14 +1646,7 @@ app.post('/api/members/reminders/send-due', requireAdmin, async (req, res) => {
     // text — the member already has a haircut coming. Move the next
     // reminder to the day after their latest upcoming haircut inside
     // the membership month, so they are reminded to book the next one.
-    const memberPhone = normalizePhone(m.phone);
-    const upcomingDates = bookings
-      .filter((b) => normalizePhone(b.phone) === memberPhone
-        && HAIRCUT_SERVICE_IDS.includes(b.serviceId)
-        && b.status !== 'cancelled' && !b.blocked
-        && b.date >= today && b.date <= memberExpiryDate(m))
-      .map((b) => b.date);
-    const latestUpcoming = upcomingDates.length ? upcomingDates.sort().pop() : null;
+    const latestUpcoming = latestUpcomingHaircut(m, bookings, today);
     if (latestUpcoming) {
       await store.updateMember(m.id, { nextReminderDate: addDays(latestUpcoming, 1) });
       skippedAlreadyBooked++;

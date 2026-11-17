@@ -930,6 +930,53 @@ async function sendReminderEmail(booking, service) {
   }
 }
 
+// Reschedule email (client only — the owner makes the change in the
+// dashboard, so they need no email about their own action). Same style
+// as the confirmation email: start time only, "please call" instead
+// of "reply to this email". oldDate/oldStartMinutes describe the
+// appointment before the change.
+async function sendRescheduleEmail(booking, service, oldDate, oldStartMinutes) {
+  if (!emailIsConfigured()) return false;
+  const newWhen = `${formatDate(booking.date)} at ${minutesToTime(booking.startMinutes)} (${TZ})`;
+  const oldWhen = `${formatDate(oldDate)} at ${minutesToTime(oldStartMinutes)} (${TZ})`;
+  const gmailFrom = `"${SALON_NAME}" <${process.env.GMAIL_USER}>`;
+  const mail = {
+    from: RESEND_API_KEY ? RESEND_FROM : gmailFrom,
+    to: booking.email,
+    subject: `Your ${SALON_NAME} appointment has been rescheduled — ${formatDate(booking.date)}`,
+    text: `Hi ${booking.name},\n\nYour appointment at ${SALON_NAME} has been rescheduled:\n\nService: ${service.name}${service.priceLabel ? ` (${service.priceLabel})` : ''}\nWas: ${oldWhen}\nNow: ${newWhen}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nSee you soon! If you need to change or cancel, please call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
+  };
+  try {
+    if (RESEND_API_KEY) await sendViaResend(mail);
+    else await mailer.sendMail(mail);
+    return true;
+  } catch (e) {
+    console.error('Reschedule email send failed:', e.message);
+    return false;
+  }
+}
+
+// Cancellation email (client only, same style as above).
+async function sendCancelEmail(booking, service) {
+  if (!emailIsConfigured()) return false;
+  const when = `${formatDate(booking.date)} at ${minutesToTime(booking.startMinutes)} (${TZ})`;
+  const gmailFrom = `"${SALON_NAME}" <${process.env.GMAIL_USER}>`;
+  const mail = {
+    from: RESEND_API_KEY ? RESEND_FROM : gmailFrom,
+    to: booking.email,
+    subject: `Your ${SALON_NAME} appointment has been cancelled — ${formatDate(booking.date)}`,
+    text: `Hi ${booking.name},\n\nYour appointment at ${SALON_NAME} has been cancelled:\n\nService: ${service.name}${service.priceLabel ? ` (${service.priceLabel})` : ''}\nWhen: ${when}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nIf you'd like to book again, visit pxcutzz.com or call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
+  };
+  try {
+    if (RESEND_API_KEY) await sendViaResend(mail);
+    else await mailer.sendMail(mail);
+    return true;
+  } catch (e) {
+    console.error('Cancel email send failed:', e.message);
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // SMS via Twilio (optional — everything still works when not configured)
 // ---------------------------------------------------------------------------
@@ -1176,10 +1223,23 @@ app.post('/api/bookings/:id/complete', requireAdmin, async (req, res) => {
 
 // Cancel a booking. Cancelled bookings no longer block their slot
 // (listOnDate excludes them), so the time becomes bookable again.
+// The client gets a cancellation email (the owner does the cancelling
+// in the dashboard, so they need no email about it). Cancelling an
+// already-cancelled booking sends nothing — no double email.
 app.post('/api/bookings/:id/cancel', requireAdmin, async (req, res) => {
+  const all = await store.list();
+  const existing = all.find((b) => String(b.id) === String(req.params.id));
+  if (!existing) return res.status(404).json({ error: 'Booking not found.' });
+  if (existing.status === 'cancelled') return res.json(publicBooking(existing));
   const row = await store.cancel(req.params.id);
   if (!row) return res.status(404).json({ error: 'Booking not found.' });
-  res.json(publicBooking(row));
+  let emailSent = false;
+  if (!row.blocked && row.email) {
+    const service = SERVICES.find((s) => s.id === row.serviceId)
+      || { name: row.serviceName, priceLabel: '' };
+    emailSent = await sendCancelEmail(row, service);
+  }
+  res.json({ ...publicBooking(row), cancelEmailSent: emailSent });
 });
 
 // Edit a booking (owner). Validates exactly like creation: service
@@ -1240,6 +1300,16 @@ app.put('/api/bookings/:id', requireAdmin, async (req, res) => {
     resetReminder: newDate !== existing.date,
   });
   if (!row) return res.status(404).json({ error: 'Booking not found.' });
+  // The appointment moved — tell the client the new time (the owner
+  // does the moving in the dashboard, so they need no email about it).
+  // A notes/service-only edit is not a reschedule and sends nothing.
+  let emailSent = false;
+  let emailAttempted = false;
+  if (slotChanged && existing.status !== 'cancelled' && !existing.blocked && row.email) {
+    emailAttempted = true;
+    emailSent = await sendRescheduleEmail(row, service, existing.date, existing.startMinutes);
+  }
+  if (emailAttempted) return res.json({ ...publicBooking(row), rescheduleEmailSent: emailSent });
   res.json(publicBooking(row));
 });
 

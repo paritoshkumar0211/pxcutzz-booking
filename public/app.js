@@ -19,6 +19,38 @@ function setStep(n) {
   });
   showError('');
   window.scrollTo({ top: $('book').offsetTop - 70, behavior: 'smooth' });
+  if (n === 4) updateJoinVisibility();
+}
+
+// Hide the "Join membership" option for clients who are already
+// members: when the phone number is typed, check it (only a yes/no
+// answer comes back — no member details) and hide the option when the
+// number belongs to someone with an active, unfinished membership.
+// A finished or expired member still sees the option, so they can
+// join the next membership.
+let memberCheckTimer = null;
+let lastCheckedPhone = '';
+async function updateJoinVisibility() {
+  const row = $('joinMembershipRow');
+  const note = $('joinMembershipNote');
+  if (!row || !note) return;
+  const phone = $('phoneInput').value.replace(/\D/g, '');
+  if (phone.length < 10) {
+    // Not a full number yet — show the option again.
+    lastCheckedPhone = '';
+    row.classList.remove('hidden');
+    note.classList.remove('hidden');
+    return;
+  }
+  if (phone === lastCheckedPhone) return;
+  lastCheckedPhone = phone;
+  try {
+    const data = await api(`/api/members/check?phone=${encodeURIComponent(phone)}`);
+    const isMember = !!data.isMember;
+    if (isMember) $('joinMembershipInput').checked = false;
+    row.classList.toggle('hidden', isMember);
+    note.classList.toggle('hidden', isMember);
+  } catch (_) { /* check failed — leave the option visible */ }
 }
 
 async function api(path, opts = {}) {
@@ -144,5 +176,9 @@ $('backToTimeBtn').onclick = () => setStep(3);
 $('bookingForm').addEventListener('submit', submitBooking);
 $('bookAnotherBtn').onclick = () => { $('bookingForm').reset(); setStep(1); };
 $('dateInput').addEventListener('change', () => { if (!$('stepTime').classList.contains('hidden')) loadSlots(); });
+$('phoneInput').addEventListener('input', () => {
+  clearTimeout(memberCheckTimer);
+  memberCheckTimer = setTimeout(updateJoinVisibility, 500);
+});
 
 loadServices();

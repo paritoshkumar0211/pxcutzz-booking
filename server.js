@@ -1510,12 +1510,22 @@ app.post('/api/members', requireAdmin, async (req, res) => {
   if (!phone || !String(phone).trim()) return res.status(400).json({ error: 'Please enter the member phone number.' });
   const joined = isValidDate(joinedDate) ? joinedDate : todayInSalonTz();
   const today = todayInSalonTz();
-  // First reminder is 9 days after joining — unless that date is
-  // already today or in the past (an old client added with a past join
-  // date), in which case it is tomorrow, so the member is reminded
-  // right away instead of the dashboard showing a past date and the
-  // catch-up send pushing their next haircut into the last 10 days.
-  const firstReminder = addDays(joined, MEMBERSHIP_REMINDER_DAYS);
+  // Haircuts already done before the member was added (old clients).
+  const prior = Math.min(3, Math.max(0, parseInt(priorHaircuts, 10) || 0));
+  // First reminder is 9 days after the member's LAST haircut — not 9
+  // days after joining. A new member (no haircuts yet) is reminded 9
+  // days after joining. An old client added with haircuts already done
+  // had them about 10 days apart (3 haircuts in a month, starting on
+  // the join date), so with `d` done the last one was on join +
+  // 10*(d-1) and the next reminder is 9 days after that. That is why
+  // (joined Nov 1, 2 done) reminds on Nov 20, not Nov 10 or Nov 19:
+  // last haircut Nov 11, + 9 days = Nov 20, and the next haircut
+  // follows the day after (Nov 21). For 1 done this is just join + 9,
+  // the same as a new member. If that date is already today or in the
+  // past, it is tomorrow, so the member is reminded right away instead
+  // of the dashboard showing a past date.
+  const lastHaircut = prior > 0 ? addDays(joined, 10 * (prior - 1)) : joined;
+  const firstReminder = addDays(lastHaircut, MEMBERSHIP_REMINDER_DAYS);
   let nextReminderDate = firstReminder > today ? firstReminder : addDays(today, 1);
   // Already has a haircut booked in advance? The first reminder is
   // the day after that haircut, not join date + 9 — no point nudging
@@ -1526,8 +1536,6 @@ app.post('/api/members', requireAdmin, async (req, res) => {
   if (latestUpcoming && nextReminderDate <= latestUpcoming) {
     nextReminderDate = addDays(latestUpcoming, 1);
   }
-  // Haircuts already done before the member was added (old clients).
-  const prior = Math.min(3, Math.max(0, parseInt(priorHaircuts, 10) || 0));
   const existing = await store.findMemberByPhone(phone);
   if (existing) return res.status(409).json({ error: 'This phone number is already a member.' });
   const member = await store.insertMember({

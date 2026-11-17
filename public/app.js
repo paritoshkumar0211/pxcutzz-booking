@@ -97,12 +97,27 @@ function vancouverToday() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
 
+function isTuesday(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay() === 2;
+}
+
+// Advance a YYYY-MM-DD date until it is not a Tuesday (closed day).
+// The native date picker cannot disable individual weekdays, so a
+// picked Tuesday is moved to the next open day instead.
+function nextOpenDate(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  while (dt.getUTCDay() === 2) dt.setUTCDate(dt.getUTCDate() + 1);
+  return dt.toISOString().slice(0, 10);
+}
+
 function setupDateInput() {
   const input = $('dateInput');
   input.min = vancouverToday();
   const max = new Date(); max.setDate(max.getDate() + 60);
   input.max = max.toISOString().slice(0, 10);
-  input.value = vancouverToday();
+  input.value = nextOpenDate(vancouverToday());
 }
 
 async function loadSlots() {
@@ -175,7 +190,16 @@ $('backToDayBtn').onclick = () => setStep(2);
 $('backToTimeBtn').onclick = () => setStep(3);
 $('bookingForm').addEventListener('submit', submitBooking);
 $('bookAnotherBtn').onclick = () => { $('bookingForm').reset(); setStep(1); };
-$('dateInput').addEventListener('change', () => { if (!$('stepTime').classList.contains('hidden')) loadSlots(); });
+$('dateInput').addEventListener('change', () => {
+  const input = $('dateInput');
+  // Tuesdays are closed: the native date picker cannot grey them
+  // out, so a picked Tuesday is moved to the next open day.
+  if (input.value && isTuesday(input.value)) {
+    showError('The salon is closed on Tuesdays. Please pick another day.');
+    input.value = nextOpenDate(input.value);
+  }
+  if (!$('stepTime').classList.contains('hidden')) loadSlots();
+});
 $('phoneInput').addEventListener('input', () => {
   clearTimeout(memberCheckTimer);
   memberCheckTimer = setTimeout(updateJoinVisibility, 500);

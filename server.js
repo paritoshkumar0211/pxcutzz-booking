@@ -811,6 +811,16 @@ function isValidDate(dateStr) {
   return !isNaN(d) && d.toISOString().slice(0, 10) === dateStr;
 }
 
+// A block-time duration (minutes) from the dashboard: a whole number
+// of 15-minute steps, 15–480. Returns the minutes, or null when the
+// value is missing or invalid.
+function parseBlockDuration(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 15 || n > 480 || n % 15 !== 0) return null;
+  return n;
+}
+
 // Slots available for a service on a date: 15-min starts, 9 AM–9 PM.
 // A slot is offered only if the whole service finishes by 9 PM, and
 // never when it is in the past (past dates offer nothing; for today
@@ -1079,8 +1089,17 @@ app.get('/api/info', (req, res) => res.json({
 app.get('/api/services', (req, res) => res.json(SERVICES));
 
 app.get('/api/slots', async (req, res) => {
-  const { date, serviceId } = req.query;
-  const service = SERVICES.find((s) => s.id === serviceId);
+  const { date, serviceId, duration } = req.query;
+  // Blocking a time: the owner sets the length, so the slot grid is
+  // built for that duration instead of a service's.
+  let service = null;
+  if (duration !== undefined && duration !== '') {
+    const blockDuration = parseBlockDuration(duration);
+    if (blockDuration === null) return res.status(400).json({ error: 'Duration must be 15–480 minutes, in 15-minute steps.' });
+    service = { id: 'blocked', name: 'Blocked', duration: blockDuration };
+  } else {
+    service = SERVICES.find((s) => s.id === serviceId);
+  }
   if (!service) return res.status(400).json({ error: 'Unknown service.' });
   if (!isValidDate(date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD.' });
   if (date < todayInSalonTz()) return res.status(400).json({ error: 'Please pick today or a future date.' });
@@ -1092,15 +1111,23 @@ app.get('/api/slots', async (req, res) => {
 });
 
 app.post('/api/bookings', async (req, res) => {
-  const { serviceId, date, time, name, phone, email, notes, blocked, joinMembership } = req.body || {};
-  const service = SERVICES.find((s) => s.id === serviceId);
-  if (!service) return res.status(400).json({ error: 'Please choose a service.' });
+  const { serviceId, date, time, name, phone, email, notes, blocked, joinMembership, duration } = req.body || {};
   // "Block this time (no customer)" — an owner-only action. The public
   // booking form must never be able to create a blocked slot, so a
   // blocked request needs the same valid admin token as the other
   // admin endpoints (requireAdmin's rule, applied inline here because
   // this endpoint is otherwise public).
   const isBlockedBooking = !!blocked;
+  const service = SERVICES.find((s) => s.id === serviceId);
+  if (!service && !isBlockedBooking) return res.status(400).json({ error: 'Please choose a service.' });
+  // A blocked slot has no service — the owner sets how long to block
+  // (default 30 min). A regular booking's length is its service's.
+  let blockDuration = 30;
+  if (isBlockedBooking && duration !== undefined && duration !== '') {
+    blockDuration = parseBlockDuration(duration);
+    if (blockDuration === null) return res.status(400).json({ error: 'Duration must be 15–480 minutes, in 15-minute steps.' });
+  }
+  const apptDuration = isBlockedBooking ? blockDuration : service.duration;
   if (isBlockedBooking && ADMIN_TOKEN) {
     const token = req.query.token || req.headers['x-admin-token'];
     if (token !== ADMIN_TOKEN) {
@@ -1115,10 +1142,10 @@ app.post('/api/bookings', async (req, res) => {
     return res.status(400).json({ error: 'The salon is closed on that day.' });
   const startMinutes = timeToMinutes(time);
   if (startMinutes === null) return res.status(400).json({ error: 'Please choose a valid time slot.' });
-  if (startMinutes < OPEN_MINUTES || startMinutes + service.duration > CLOSE_MINUTES)
+  if (startMinutes < OPEN_MINUTES || startMinutes + apptDuration > CLOSE_MINUTES)
     return res.status(400).json({ error: 'That time is outside opening hours (9:00 AM – 9:00 PM).' });
   // Daily lunch break: no booking may overlap 2:00–2:30 PM.
-  if (overlapsLunch(startMinutes, startMinutes + service.duration))
+  if (overlapsLunch(startMinutes, startMinutes + apptDuration))
     return res.status(400).json({ error: 'The salon is on lunch break 2:00–2:30 PM. Please pick another slot.' });
   // A past slot can never be booked, even by a direct API call — the
   // slot list hides it, and this rejects it too.
@@ -1133,12 +1160,12 @@ app.post('/api/bookings', async (req, res) => {
   }
   const cleanNotes = String(notes || '').trim().slice(0, 500);
 
-  const endMinutes = startMinutes + service.duration;
+  const endMinutes = startMinutes + apptDuration;
   const clash = (await store.listOnDate(date)).some((b) => startMinutes < b.endMinutes && endMinutes > b.startMinutes);
   if (clash) return res.status(409).json({ error: 'Sorry, that time was just taken. Please pick another slot.' });
 
   const row = await store.insert({
-    serviceId: service.id, serviceName: service.name, date, startMinutes, endMinutes,
+    serviceId: isBlockedBooking ? 'blocked' : service.id, serviceName: isBlockedBooking ? 'Blocked' : service.name, date, startMinutes, endMinutes,
     name: isBlockedBooking ? '' : String(name).trim(),
     phone: isBlockedBooking ? '' : String(phone).trim(),
     email: isBlockedBooking ? '' : String(email).trim().toLowerCase(),
@@ -1250,9 +1277,20 @@ app.put('/api/bookings/:id', requireAdmin, async (req, res) => {
   const all = await store.list();
   const existing = all.find((b) => String(b.id) === String(req.params.id));
   if (!existing) return res.status(404).json({ error: 'Booking not found.' });
-  const { serviceId, date, time, name, phone, email, notes } = req.body || {};
+  const { serviceId, date, time, name, phone, email, notes, duration } = req.body || {};
+  const isBlockedRow = !!existing.blocked;
   const service = SERVICES.find((s) => s.id === (serviceId || existing.serviceId));
-  if (!service) return res.status(400).json({ error: 'Please choose a service.' });
+  if (!service && !isBlockedRow) return res.status(400).json({ error: 'Please choose a service.' });
+  // A blocked slot has no service — its length is the duration the
+  // owner sets (default: the length it already has).
+  let blockDuration = (existing.endMinutes ?? 0) - (existing.startMinutes ?? 0);
+  if (!(blockDuration > 0)) blockDuration = 30;
+  if (isBlockedRow && duration !== undefined && duration !== '') {
+    const parsed = parseBlockDuration(duration);
+    if (parsed === null) return res.status(400).json({ error: 'Duration must be 15–480 minutes, in 15-minute steps.' });
+    blockDuration = parsed;
+  }
+  const apptDuration = isBlockedRow ? blockDuration : service.duration;
   const newDate = date || existing.date;
   // Stored rows carry startMinutes, not a formatted time string — fall
   // back to that when the caller sends no time (e.g. a notes-only edit).
@@ -1265,7 +1303,7 @@ app.put('/api/bookings/:id', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'The salon is closed on that day.' });
   const startMinutes = timeToMinutes(newTime);
   if (startMinutes === null) return res.status(400).json({ error: 'Please choose a valid time slot.' });
-  if (startMinutes < OPEN_MINUTES || startMinutes + service.duration > CLOSE_MINUTES)
+  if (startMinutes < OPEN_MINUTES || startMinutes + apptDuration > CLOSE_MINUTES)
     return res.status(400).json({ error: 'That time is outside opening hours (9:00 AM – 9:00 PM).' });
   // Moving a booking into a past slot is never allowed. Keeping the
   // booking's existing slot (e.g. a notes-only edit of a booking whose
@@ -1275,7 +1313,7 @@ app.put('/api/bookings/:id', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'That time has already passed. Please pick a later slot.' });
   // Daily lunch break: a booking moved into 2:00–2:30 PM is rejected
   // (a notes-only edit of an existing slot is left alone).
-  if (slotChanged && overlapsLunch(startMinutes, startMinutes + service.duration))
+  if (slotChanged && overlapsLunch(startMinutes, startMinutes + apptDuration))
     return res.status(400).json({ error: 'The salon is on lunch break 2:00–2:30 PM. Please pick another slot.' });
   // A blocked slot has no customer — its name/phone/email stay empty.
   const newName = existing.blocked ? existing.name : (name ?? existing.name);
@@ -1287,12 +1325,12 @@ app.put('/api/bookings/:id', requireAdmin, async (req, res) => {
     if (!newEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(newEmail).trim()))
       return res.status(400).json({ error: 'Please enter a valid email address.' });
   }
-  const endMinutes = startMinutes + service.duration;
+  const endMinutes = startMinutes + apptDuration;
   const clash = (await store.listOnDate(newDate)).some((b) =>
     String(b.id) !== String(existing.id) && startMinutes < b.endMinutes && endMinutes > b.startMinutes);
   if (clash) return res.status(409).json({ error: 'That time is already taken. Please pick another slot.' });
   const row = await store.update(existing.id, {
-    serviceId: service.id, serviceName: service.name, date: newDate,
+    serviceId: isBlockedRow ? existing.serviceId : service.id, serviceName: isBlockedRow ? existing.serviceName : service.name, date: newDate,
     startMinutes, endMinutes,
     name: String(newName || '').trim(), phone: String(newPhone || '').trim(),
     email: String(newEmail || '').trim().toLowerCase(),

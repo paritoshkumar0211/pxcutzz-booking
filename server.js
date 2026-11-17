@@ -756,7 +756,7 @@ function memberExpiryDate(member) { return addMonths(member.joinedDate, MEMBERSH
 // Why a membership is finished: 'haircuts' (all 3 used) or 'expired'
 // (the month ran out) — null while it is still going.
 function memberFinishedReason(member, bookings, today) {
-  if (haircutsUsed(member, bookings) >= 3) return 'haircuts';
+  if (haircutsUsed(member, bookings, today) >= 3) return 'haircuts';
   if ((today || todayInSalonTz()) > memberExpiryDate(member)) return 'expired';
   return null;
 }
@@ -773,23 +773,28 @@ function normalizePhone(p) {
 // added to the list (old clients — walk-ins, not in the booking
 // system), plus confirmed, non-blocked bookings inside the membership
 // month (join date to expiry date), for a haircut service, matched by
-// phone. A haircut booked after the month ran out is not one of the 3
-// — the client pays for it separately. A booking only counts if it was
-// made AFTER the member was added: appointments already on the books
-// when the owner adds an old client are inside the "haircuts already
-// done" number they typed — counting them again would show 3 when
-// they entered 2. (A member with no created date keeps the old count.)
-function haircutsUsed(member, bookings) {
+// phone. Only haircuts ALREADY DONE count: a booking counts once its
+// appointment day has arrived (date <= today) — a future appointment
+// is not one of the 3 until its day comes. A haircut booked after the
+// month ran out is not one of the 3 — the client pays for it
+// separately. A booking only counts if it was made AFTER the member
+// was added: appointments already on the books when the owner adds an
+// old client are inside the "haircuts already done" number they typed
+// — counting them again would show 3 when they entered 2. (A member
+// with no created date keeps the old count.)
+function haircutsUsed(member, bookings, today) {
   const prior = member.priorHaircuts ?? member.prior_haircuts ?? 0;
   const phone = normalizePhone(member.phone);
   if (!phone) return prior;
   const since = member.createdAt || member.created_at || '';
+  const doneBy = today || todayInSalonTz();
   return prior + bookings.filter((b) =>
     normalizePhone(b.phone) === phone
     && HAIRCUT_SERVICE_IDS.includes(b.serviceId)
     && b.status !== 'cancelled' && !b.blocked
     && b.date >= member.joinedDate
     && b.date <= memberExpiryDate(member)
+    && b.date <= doneBy
     && (!since || (b.createdAt || '') >= since)
   ).length;
 }
@@ -1117,7 +1122,8 @@ app.post('/api/bookings', async (req, res) => {
         name: saved.name, phone: saved.phone, email: saved.email,
         joinedDate: today, nextReminderDate: addDays(today, MEMBERSHIP_REMINDER_DAYS),
         // Created at the same moment as the booking, so this booking
-        // counts as the member's first haircut (see haircutsUsed).
+        // counts as the member's first haircut once its day arrives
+        // (see haircutsUsed — future appointments don't count yet).
         createdAt: saved.createdAt,
       });
       membershipJoined = true;
@@ -1136,8 +1142,10 @@ app.post('/api/bookings', async (req, res) => {
   // request) — the confirmation email above is the confirmation, and
   // the 3-hour reminder SMS still goes out via /api/reminders/send-due.
   // If this booking finished the member's membership (their 3rd
-  // haircut), invite them to join the next one — fire-and-forget, so
-  // it never blocks or fails the booking response.
+  // haircut, counting only haircuts whose day has arrived — a future
+  // booking does not finish it yet), invite them to join the next
+  // one — fire-and-forget, so it never blocks or fails the booking
+  // response.
   sendRenewalRemindersIfDue().catch((e) => console.error('Renewal reminder failed:', e.message));
   res.status(201).json({
     booking: saved,
@@ -1340,7 +1348,7 @@ app.get('/api/members', requireAdmin, async (req, res) => {
   const bookings = await store.list();
   res.json(members.map((m) => ({
     ...m,
-    haircutsUsed: haircutsUsed(m, bookings),
+    haircutsUsed: haircutsUsed(m, bookings, today),
     expiryDate: memberExpiryDate(m),
     finishedReason: memberFinishedReason(m, bookings, today),
   })));

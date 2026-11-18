@@ -1200,13 +1200,16 @@ app.post('/api/bookings', async (req, res) => {
   const dayBookings = await store.listOnDate(date);
   const clash = dayBookings.some((b) => startMinutes < b.endMinutes && endMinutes > b.startMinutes);
   if (clash) return res.status(409).json({ error: 'Sorry, that time was just taken. Please pick another slot.' });
-  // One booking per phone number per day (owner's rule, 2026-11-17):
-  // the same number cannot book two appointments on the same day.
-  // Cancelled bookings don't block (listOnDate excludes them), and
-  // blocked slots have no customer, so they never match.
+  // One booking per phone number per day, same service only
+  // (owner's rule, 2026-11-17; exception 2026-11-18): the same number
+  // cannot book the SAME service twice on the same day, but a second
+  // booking for a DIFFERENT service (e.g. D Tan or Scrub after a
+  // haircut) is allowed. Cancelled bookings don't block (listOnDate
+  // excludes them), and blocked slots have no customer, so they never match.
   if (!isBlockedBooking) {
     const alreadyBooked = dayBookings.some(
-      (b) => b.serviceId !== 'blocked' && normalizePhone(b.phone) === normalizePhone(phone)
+      (b) => b.serviceId !== 'blocked' && b.serviceId === service.id &&
+        normalizePhone(b.phone) === normalizePhone(phone)
     );
     if (alreadyBooked) return res.status(400).json({ error: 'This phone number already has an appointment on this day. To change or cancel, please call 6725882101.' });
   }
@@ -1386,13 +1389,15 @@ app.put('/api/bookings/:id', requireAdmin, async (req, res) => {
   const clash = (await store.listOnDate(newDate)).some((b) =>
     String(b.id) !== String(existing.id) && startMinutes < b.endMinutes && endMinutes > b.startMinutes);
   if (clash) return res.status(409).json({ error: 'That time is already taken. Please pick another slot.' });
-  // One booking per phone number per day (owner's rule, 2026-11-17):
-  // moving a booking onto a day where the same number already has
-  // one is rejected (excluding the booking itself).
+  // One booking per phone number per day, same service only
+  // (owner's rule, 2026-11-17; exception 2026-11-18): moving a booking
+  // onto a day where the same number already has the SAME service is
+  // rejected (excluding the booking itself); a different service on
+  // the same day is allowed.
   if (!existing.blocked) {
     const sameDay = (await store.listOnDate(newDate)).some((b) =>
       String(b.id) !== String(existing.id) && b.serviceId !== 'blocked' &&
-      normalizePhone(b.phone) === normalizePhone(newPhone));
+      b.serviceId === service.id && normalizePhone(b.phone) === normalizePhone(newPhone));
     if (sameDay) return res.status(400).json({ error: 'This phone number already has an appointment on this day. To change or cancel, please call 6725882101.' });
   }
   const row = await store.update(existing.id, {

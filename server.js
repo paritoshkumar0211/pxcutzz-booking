@@ -1197,8 +1197,19 @@ app.post('/api/bookings', async (req, res) => {
   const cleanNotes = String(notes || '').trim().slice(0, 500);
 
   const endMinutes = startMinutes + apptDuration;
-  const clash = (await store.listOnDate(date)).some((b) => startMinutes < b.endMinutes && endMinutes > b.startMinutes);
+  const dayBookings = await store.listOnDate(date);
+  const clash = dayBookings.some((b) => startMinutes < b.endMinutes && endMinutes > b.startMinutes);
   if (clash) return res.status(409).json({ error: 'Sorry, that time was just taken. Please pick another slot.' });
+  // One booking per phone number per day (owner's rule, 2026-11-17):
+  // the same number cannot book two appointments on the same day.
+  // Cancelled bookings don't block (listOnDate excludes them), and
+  // blocked slots have no customer, so they never match.
+  if (!isBlockedBooking) {
+    const alreadyBooked = dayBookings.some(
+      (b) => b.serviceId !== 'blocked' && normalizePhone(b.phone) === normalizePhone(phone)
+    );
+    if (alreadyBooked) return res.status(400).json({ error: 'This phone number already has an appointment on this day. To change or cancel, please call 6725882101.' });
+  }
 
   const row = await store.insert({
     serviceId: isBlockedBooking ? 'blocked' : service.id, serviceName: isBlockedBooking ? 'Blocked' : service.name, date, startMinutes, endMinutes,
@@ -1375,6 +1386,15 @@ app.put('/api/bookings/:id', requireAdmin, async (req, res) => {
   const clash = (await store.listOnDate(newDate)).some((b) =>
     String(b.id) !== String(existing.id) && startMinutes < b.endMinutes && endMinutes > b.startMinutes);
   if (clash) return res.status(409).json({ error: 'That time is already taken. Please pick another slot.' });
+  // One booking per phone number per day (owner's rule, 2026-11-17):
+  // moving a booking onto a day where the same number already has
+  // one is rejected (excluding the booking itself).
+  if (!existing.blocked) {
+    const sameDay = (await store.listOnDate(newDate)).some((b) =>
+      String(b.id) !== String(existing.id) && b.serviceId !== 'blocked' &&
+      normalizePhone(b.phone) === normalizePhone(newPhone));
+    if (sameDay) return res.status(400).json({ error: 'This phone number already has an appointment on this day. To change or cancel, please call 6725882101.' });
+  }
   const row = await store.update(existing.id, {
     serviceId: isBlockedRow ? existing.serviceId : service.id, serviceName: isBlockedRow ? existing.serviceName : service.name, date: newDate,
     startMinutes, endMinutes,

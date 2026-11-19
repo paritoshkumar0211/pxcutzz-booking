@@ -845,7 +845,11 @@ function parseBlockDuration(value) {
 // A slot is offered only if the whole service finishes by 9 PM, and
 // never when it is in the past (past dates offer nothing; for today
 // only slots starting after the current time, salon timezone).
-async function availableSlots(service, dateStr) {
+// When the owner edits a booking, the slot grid must treat that
+// booking's own time as free — otherwise the owner can never re-pick
+// the booking's current slot (or move to a time that only clashes with
+// the booking itself), especially after changing the service.
+async function availableSlots(service, dateStr, excludeId) {
   if (weekdayOf(dateStr) === CLOSED_WEEKDAY) return [];
   const taken = await store.listOnDate(dateStr);
   const slots = [];
@@ -853,7 +857,7 @@ async function availableSlots(service, dateStr) {
     const end = start + service.duration;
     if (isPastSlot(dateStr, start)) continue;
     if (overlapsLunch(start, end)) continue;
-    const clash = taken.some((b) => start < b.endMinutes && end > b.startMinutes);
+    const clash = taken.some((b) => (!excludeId || String(b.id) !== String(excludeId)) && start < b.endMinutes && end > b.startMinutes);
     if (!clash) slots.push({ time: minutesToTime(start), startMinutes: start, endMinutes: end });
   }
   return slots;
@@ -1121,7 +1125,7 @@ app.get('/api/info', (req, res) => res.json({
 app.get('/api/services', (req, res) => res.json(SERVICES));
 
 app.get('/api/slots', async (req, res) => {
-  const { date, serviceId, duration } = req.query;
+  const { date, serviceId, duration, excludeId } = req.query;
   // Blocking a time: the owner sets the length, so the slot grid is
   // built for that duration instead of a service's.
   let service = null;
@@ -1139,7 +1143,7 @@ app.get('/api/slots', async (req, res) => {
     return res.json({ date, closed: true, message: 'The salon is closed on Tuesdays.', slots: [] });
   if (await store.isBlocked(date))
     return res.json({ date, closed: true, blocked: true, message: 'The salon is closed on this day.', slots: [] });
-  res.json({ date, closed: false, slots: await availableSlots(service, date) });
+  res.json({ date, closed: false, slots: await availableSlots(service, date, excludeId) });
 });
 
 app.post('/api/bookings', async (req, res) => {

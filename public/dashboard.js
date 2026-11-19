@@ -833,12 +833,17 @@ async function loadEditSlots() {
     const qs = blocked
       ? `duration=${encodeURIComponent($('editDuration').value)}`
       : `serviceId=${encodeURIComponent($('editService').value)}`;
-    const data = await api(`/api/slots?date=${encodeURIComponent(date)}&${qs}`);
+    // Exclude the booking being edited — its own time is free to
+    // re-pick (the owner is moving it), so the grid must not treat it
+    // as taken. This matters most when the service changes: without it
+    // the old booking blocks every new-duration start that overlaps it.
+    const data = await api(`/api/slots?date=${encodeURIComponent(date)}&${qs}&excludeId=${encodeURIComponent(id)}`);
     hint.textContent = (data.closed || data.slots.length === 0) ? (data.message || 'No times available on that day.') : '';
     const times = data.slots.map((s) => s.time);
-    // Keep the booking's current time selectable when the date and
-    // service are unchanged — /api/slots excludes it as "taken" — but
-    // never when that time is already past (past slots are never shown).
+    // Safety net: keep the booking's current time selectable when the
+    // date and service are unchanged (the excludeId above already
+    // covers it in most cases) — but never when that time is already
+    // past (past slots are never shown).
     if (original && original.date === date && (blocked || original.serviceId === $('editService').value)
       && !times.includes(original.time) && !isPastSlot(date, original.time)) {
       times.unshift(original.time);

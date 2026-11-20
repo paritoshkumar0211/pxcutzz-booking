@@ -1710,16 +1710,28 @@ app.post('/api/members/:id/joined-date', requireAdmin, async (req, res) => {
 // Restart a member: a new membership cycle starting today (join date
 // today, first reminder 9 days later, haircut count restarts, and the
 // renewal reminder becomes due again when this cycle finishes).
-// The count restart must reset priorHaircuts to 0 AND move createdAt
-// to now, so haircuts from the previous cycle (including one booked
-// for the reactivation day itself) do not carry into the new cycle —
-// otherwise a reactivated member immediately shows FINISHED again.
+// The count restart resets priorHaircuts to 0; bookings from the
+// previous cycle fall outside the new join-date window, so they no
+// longer count. (createdAt is left alone so a haircut the member
+// booked for later in the new cycle still counts when its day comes.)
 app.post('/api/members/:id/reactivate', requireAdmin, async (req, res) => {
   const today = todayInSalonTz();
   const member = await store.updateMember(req.params.id, {
     active: true, joinedDate: today, nextReminderDate: addDays(today, MEMBERSHIP_REMINDER_DAYS),
-    renewalReminderSent: false, priorHaircuts: 0, createdAt: new Date().toISOString(),
+    renewalReminderSent: false, priorHaircuts: 0,
   });
+  if (!member) return res.status(404).json({ error: 'Member not found.' });
+  res.json(member);
+});
+
+// Admin correction: set a member's created-at timestamp. The haircut
+// count only includes bookings made on/after this moment (bookings
+// made before a member was added are covered by priorHaircuts), so
+// correcting it fixes which bookings count toward the 3.
+app.post('/api/members/:id/created-at', requireAdmin, async (req, res) => {
+  const { createdAt } = req.body || {};
+  if (!createdAt || isNaN(Date.parse(createdAt))) return res.status(400).json({ error: 'createdAt must be an ISO timestamp.' });
+  const member = await store.updateMember(req.params.id, { createdAt: new Date(createdAt).toISOString() });
   if (!member) return res.status(404).json({ error: 'Member not found.' });
   res.json(member);
 });

@@ -46,6 +46,22 @@ function nowMinutesVancouver() {
   return h * 60 + m;
 }
 
+function addDaysStr(dateStr, n) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + n);
+  return dt.toISOString().slice(0, 10);
+}
+
+// The date the dashboard opens on: today, or tomorrow (next open
+// day) after 9:30 PM salon time when the day is over — the same
+// rule as the public booking form. Clicking any calendar day still
+// shows that day's appointments, past ones included.
+function defaultDashboardDate() {
+  const base = nowMinutesVancouver() >= 21 * 60 + 30 ? addDaysStr(vancouverToday(), 1) : vancouverToday();
+  return nextOpenDate(base);
+}
+
 // "9:00 AM" -> minutes since midnight (null when unparsable).
 function timeStrToMinutes(t) {
   const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec((t || '').trim());
@@ -221,9 +237,9 @@ function changeMonth(delta) {
   if (m > 11) { m = 0; y += 1; }
   state.viewYear = y;
   state.viewMonth = m;
-  const today = vancouverToday();
-  const [ty, tm] = today.split('-').map(Number);
-  state.selectedDate = (y === ty && m === tm - 1) ? today : nextOpenDate(dateStrOf(y, m, 1));
+  const def = defaultDashboardDate();
+  const [dy, dm] = def.split('-').map(Number);
+  state.selectedDate = (y === dy && m === dm - 1) ? def : nextOpenDate(dateStrOf(y, m, 1));
   hideAddForm();
   renderCalendar();
   renderDayDetail();
@@ -945,11 +961,11 @@ async function submitEditBooking(ev) {
 // ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
-const today = vancouverToday();
-const [cy, cm] = today.split('-').map(Number);
+const def = defaultDashboardDate();
+const [cy, cm] = def.split('-').map(Number);
 state.viewYear = cy;
 state.viewMonth = cm - 1;
-state.selectedDate = today;
+state.selectedDate = def;
 
 $('prevMonthBtn').onclick = () => changeMonth(-1);
 $('nextMonthBtn').onclick = () => changeMonth(1);

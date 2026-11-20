@@ -1727,20 +1727,54 @@ function latestUpcomingHaircut(member, bookings, today) {
   return upcomingDates.length ? upcomingDates.sort().pop() : null;
 }
 
+// The date of the member's most recent haircut that is on the books
+// (same matching rules as haircutsUsed: by phone, a haircut service,
+// not cancelled or blocked, inside the membership month, day already
+// arrived, booked after the member was added). Null when the member
+// has no such booking — e.g. an old client added with "haircuts
+// already done", whose earlier haircuts were never booked here.
+function lastHaircutDate(member, bookings, today) {
+  const phone = normalizePhone(member.phone);
+  if (!phone) return null;
+  const since = member.createdAt || member.created_at || '';
+  const doneBy = today || todayInSalonTz();
+  const dates = bookings.filter((b) =>
+    normalizePhone(b.phone) === phone
+    && HAIRCUT_SERVICE_IDS.includes(b.serviceId)
+    && b.status !== 'cancelled' && !b.blocked
+    && b.date >= member.joinedDate
+    && b.date <= memberExpiryDate(member)
+    && b.date <= doneBy
+    && (!since || (b.createdAt || '') >= since)
+  ).map((b) => b.date);
+  return dates.length ? dates.sort().pop() : null;
+}
+
 // The reminder date the member will actually be nudged on. A
 // brand-new member (0 haircuts done) is reminded the day before
 // their membership starts — that date is stored when the member is
 // added (or when the join date is corrected), so the stored value is
-// already right. A member with a haircut booked in advance is
-// reminded the day after it (the send-due would only skip the stored
-// date and move it anyway). Otherwise the stored date. The dashboard
-// list and the send-due both use this, so what the owner sees is
-// what will actually go out.
+// already right. Once a member has had a haircut, the next reminder
+// is 9 days after that haircut — the appointment day is what counts,
+// not the join date (a member who joined Nov 17 but had their first
+// haircut Nov 19 is reminded Nov 28, not Nov 26). If that date has
+// already passed, the member was already nudged for this haircut, so
+// the stored date stands (it advances 9 days per reminder sent, so
+// repeat nudges don't spam). A member with a haircut booked in
+// advance is reminded the day after it (the send-due would only skip
+// the date and move it anyway). The dashboard list and the send-due
+// both use this, so what the owner sees is what will actually go out.
 function effectiveNextReminder(member, bookings, today) {
-  const next = member.nextReminderDate;
-  if (!member.active || memberFinished(member, bookings, today)) return next;
+  const stored = member.nextReminderDate;
+  if (!member.active || memberFinished(member, bookings, today)) return stored;
   const done = haircutsUsed(member, bookings, today);
-  if (done === 0) return next;
+  if (done === 0) return stored;
+  let next = stored;
+  const lastHaircut = lastHaircutDate(member, bookings, today);
+  if (lastHaircut) {
+    const afterHaircut = addDays(lastHaircut, MEMBERSHIP_REMINDER_DAYS);
+    if (afterHaircut > today) next = afterHaircut;
+  }
   const latestUpcoming = latestUpcomingHaircut(member, bookings, today);
   if (latestUpcoming && next <= latestUpcoming) return addDays(latestUpcoming, 1);
   return next;

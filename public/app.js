@@ -97,6 +97,21 @@ function vancouverToday() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
 
+// Minutes since midnight right now in salon time (America/Vancouver).
+function vancouverNowMinutes() {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Vancouver', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date());
+  const h = Number(parts.find((p) => p.type === 'hour').value);
+  const m = Number(parts.find((p) => p.type === 'minute').value);
+  return h * 60 + m;
+}
+
+function addDaysStr(dateStr, n) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + n);
+  return dt.toISOString().slice(0, 10);
+}
+
 function isTuesday(dateStr) {
   const [y, m, d] = dateStr.split('-').map(Number);
   return new Date(Date.UTC(y, m - 1, d)).getUTCDay() === 2;
@@ -117,7 +132,11 @@ function setupDateInput() {
   input.min = vancouverToday();
   const max = new Date(); max.setDate(max.getDate() + 60);
   input.max = max.toISOString().slice(0, 10);
-  input.value = nextOpenDate(vancouverToday());
+  // After 9:30 PM salon time the day is over (the last appointment
+  // ends at 9 PM), so default to tomorrow instead of a day with no
+  // times left. nextOpenDate then skips Tuesday if tomorrow is one.
+  const base = vancouverNowMinutes() >= 21 * 60 + 30 ? addDaysStr(vancouverToday(), 1) : vancouverToday();
+  input.value = nextOpenDate(base);
 }
 
 async function loadSlots() {

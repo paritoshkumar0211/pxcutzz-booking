@@ -841,23 +841,57 @@ function parseBlockDuration(value) {
   return n;
 }
 
-// Slots available for a service on a date: 15-min starts, 9 AM–9 PM.
-// A slot is offered only if the whole service finishes by 9 PM, and
-// never when it is in the past (past dates offer nothing; for today
-// only slots starting after the current time, salon timezone).
-// When the owner edits a booking, the slot grid must treat that
-// booking's own time as free — otherwise the owner can never re-pick
-// the booking's current slot (or move to a time that only clashes with
-// the booking itself), especially after changing the service.
+// Slots available for a service on a date, 9 AM–9 PM. Start times
+// are PACKED: they step by the service's own duration from each
+// boundary (opening, lunch end, and every existing booking's end),
+// so appointments sit back-to-back and no unusable gap is stranded
+// between them. With the old fixed 15-min grid a client could book
+// 12:15 after an 11:45 finish, leaving a 30-min gap that the
+// 45-min Haircut & Beard (most bookings) can never fill. Packing
+// offers 11:45, 12:30, 1:15 instead. A slot is offered only if the
+// whole service finishes by 9 PM, and never when it is in the past
+// (past dates offer nothing; for today only slots starting after the
+// current time, salon timezone). When the owner edits a booking,
+// the slot grid must treat that booking's own time as free —
+// otherwise the owner can never re-pick the booking's current slot
+// (or move to a time that only clashes with the booking itself),
+// especially after changing the service.
 async function availableSlots(service, dateStr, excludeId) {
   if (weekdayOf(dateStr) === CLOSED_WEEKDAY) return [];
   const taken = await store.listOnDate(dateStr);
+  const D = service.duration;
+  const active = taken.filter((b) => !excludeId || String(b.id) !== String(excludeId));
+
+  const candidates = new Set();
+  const boundaries = new Set([OPEN_MINUTES, LUNCH_END_MINUTES]);
+  for (const b of active) boundaries.add(b.endMinutes);
+  for (const B of boundaries) {
+    // A morning boundary only packs the morning, an afternoon one
+    // only the afternoon — otherwise the 9 AM grid would also step
+    // into the afternoon and offer a second, offset set of times.
+    const limit = B < LUNCH_END_MINUTES ? LUNCH_START_MINUTES : CLOSE_MINUTES;
+    for (let s = B; s + D <= limit; s += D) candidates.add(s);
+  }
+  // Snug fits ending exactly at lunch or closing, so the last slot
+  // of the morning / day is not lost to the stepping.
+  for (const E of [LUNCH_START_MINUTES, CLOSE_MINUTES]) {
+    const s = E - D;
+    if (s >= OPEN_MINUTES) candidates.add(s);
+  }
+  // When editing, the booking's own current start stays pickable
+  // even if it was booked before packing.
+  if (excludeId) {
+    const self = taken.find((b) => String(b.id) === String(excludeId));
+    if (self) candidates.add(self.startMinutes);
+  }
+
   const slots = [];
-  for (let start = OPEN_MINUTES; start + service.duration <= CLOSE_MINUTES; start += 15) {
-    const end = start + service.duration;
+  for (const start of [...candidates].sort((a, b) => a - b)) {
+    const end = start + D;
+    if (start < OPEN_MINUTES || end > CLOSE_MINUTES) continue;
     if (isPastSlot(dateStr, start)) continue;
     if (overlapsLunch(start, end)) continue;
-    const clash = taken.some((b) => (!excludeId || String(b.id) !== String(excludeId)) && start < b.endMinutes && end > b.startMinutes);
+    const clash = active.some((b) => start < b.endMinutes && end > b.startMinutes);
     if (!clash) slots.push({ time: minutesToTime(start), startMinutes: start, endMinutes: end });
   }
   return slots;

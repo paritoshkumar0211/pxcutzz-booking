@@ -878,6 +878,16 @@ async function availableSlots(service, dateStr, excludeId) {
     const s = E - D;
     if (s >= OPEN_MINUTES) candidates.add(s);
   }
+  // Snug fits ending exactly when an existing booking starts, so a
+  // service can be placed right before the next appointment even
+  // when that start is not on a forward chain from a boundary
+  // (e.g. a 45-min service at 6:00 PM before a 6:45 PM booking).
+  // Without this, forward packing from the previous booking's end
+  // can step past the only start that fits snugly in the gap.
+  for (const b of active) {
+    const s = b.startMinutes - D;
+    if (s >= OPEN_MINUTES) candidates.add(s);
+  }
   // When editing, the booking's own current start stays pickable
   // even if it was booked before packing.
   if (excludeId) {

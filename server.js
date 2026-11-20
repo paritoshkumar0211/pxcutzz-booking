@@ -226,6 +226,7 @@ function initSqlite() {
       if (f.active !== undefined) { cols.push('active = ?'); args.push(f.active ? 1 : 0); }
       if (f.renewalReminderSent !== undefined) { cols.push('renewal_reminder_sent = ?'); args.push(f.renewalReminderSent ? 1 : 0); }
       if (f.priorHaircuts !== undefined) { cols.push('prior_haircuts = ?'); args.push(f.priorHaircuts); }
+      if (f.createdAt !== undefined) { cols.push('created_at = ?'); args.push(f.createdAt); }
       if (cols.length) {
         args.push(id);
         db.prepare(`UPDATE members SET ${cols.join(', ')} WHERE id = ?`).run(...args);
@@ -440,6 +441,7 @@ async function initTurso() {
       if (f.active !== undefined) { cols.push('active = ?'); args.push(f.active ? 1 : 0); }
       if (f.renewalReminderSent !== undefined) { cols.push('renewal_reminder_sent = ?'); args.push(f.renewalReminderSent ? 1 : 0); }
       if (f.priorHaircuts !== undefined) { cols.push('prior_haircuts = ?'); args.push(f.priorHaircuts); }
+      if (f.createdAt !== undefined) { cols.push('created_at = ?'); args.push(f.createdAt); }
       if (cols.length) {
         args.push(id);
         await client.execute({ sql: `UPDATE members SET ${cols.join(', ')} WHERE id = ?`, args });
@@ -1708,11 +1710,15 @@ app.post('/api/members/:id/joined-date', requireAdmin, async (req, res) => {
 // Restart a member: a new membership cycle starting today (join date
 // today, first reminder 9 days later, haircut count restarts, and the
 // renewal reminder becomes due again when this cycle finishes).
+// The count restart must reset priorHaircuts to 0 AND move createdAt
+// to now, so haircuts from the previous cycle (including one booked
+// for the reactivation day itself) do not carry into the new cycle —
+// otherwise a reactivated member immediately shows FINISHED again.
 app.post('/api/members/:id/reactivate', requireAdmin, async (req, res) => {
   const today = todayInSalonTz();
   const member = await store.updateMember(req.params.id, {
     active: true, joinedDate: today, nextReminderDate: addDays(today, MEMBERSHIP_REMINDER_DAYS),
-    renewalReminderSent: false,
+    renewalReminderSent: false, priorHaircuts: 0, createdAt: new Date().toISOString(),
   });
   if (!member) return res.status(404).json({ error: 'Member not found.' });
   res.json(member);

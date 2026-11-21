@@ -950,7 +950,23 @@ async function sendViaResend(mail) {
   }
 }
 
-async function sendBookingEmails(booking, service) {
+// A line for client emails when the client has taken PXCUTZZ
+// membership, so the email mentions the membership and not only the
+// appointment (owner's rule). justJoined = they ticked "Join
+// membership" on this booking; otherwise they were already a member.
+async function membershipEmailLine(booking, justJoined) {
+  try {
+    const member = await store.findMemberByPhone(booking.phone);
+    if (!member || !member.active) return '';
+    const expiry = memberExpiryDate(member);
+    if (justJoined) {
+      return `\n\nYou've also joined the ${SALON_NAME} Membership — 3 haircuts for $110, active from ${formatDate(member.joinedDate)} to ${formatDate(expiry)}.`;
+    }
+    return `\n\nThis appointment is part of your ${SALON_NAME} Membership (active until ${formatDate(expiry)}).`;
+  } catch (_) { return ''; }
+}
+
+async function sendBookingEmails(booking, service, membershipJoined) {
   if (!emailIsConfigured()) return false;
   // booking is the public shape: time/endTime are already formatted
   // strings; startMinutes/endMinutes are NOT present (recomputing them
@@ -959,12 +975,13 @@ async function sendBookingEmails(booking, service) {
   // Clients see the start time only (e.g. 6:00 PM, not 6:00–6:30 PM):
   // the end time is the owner's detail, not the client's.
   const clientWhen = `${formatDate(booking.date)} at ${booking.time} (${TZ})`;
+  const membershipLine = await membershipEmailLine(booking, membershipJoined);
   const gmailFrom = `"${SALON_NAME}" <${process.env.GMAIL_USER}>`;
   const clientMail = {
     from: RESEND_API_KEY ? RESEND_FROM : gmailFrom,
     to: booking.email,
     subject: `Your ${SALON_NAME} appointment is booked — ${formatDate(booking.date)}`,
-    text: `Hi ${firstNameOf(booking.name)},\n\nYour appointment at ${SALON_NAME} is booked:\n\nService: ${service.name} (${service.priceLabel})\nWhen: ${clientWhen}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nIf you need to change or cancel, please call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
+    text: `Hi ${firstNameOf(booking.name)},\n\nYour appointment at ${SALON_NAME} is booked:\n\nService: ${service.name} (${service.priceLabel})\nWhen: ${clientWhen}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}${membershipLine}\n\nIf you need to change or cancel, please call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
   };
   const salonMail = {
     from: RESEND_API_KEY ? RESEND_FROM_BOOKINGS : `"${SALON_NAME} bookings" <${process.env.GMAIL_USER}>`,
@@ -993,12 +1010,13 @@ async function sendBookingEmails(booking, service) {
 async function sendReminderEmail(booking, service) {
   if (!emailIsConfigured()) return false;
   const clientWhen = `${formatDate(booking.date)} at ${minutesToTime(booking.startMinutes)} (${TZ})`;
+  const membershipLine = await membershipEmailLine(booking, false);
   const gmailFrom = `"${SALON_NAME}" <${process.env.GMAIL_USER}>`;
   const mail = {
     from: RESEND_API_KEY ? RESEND_FROM : gmailFrom,
     to: booking.email,
     subject: `Reminder: your ${SALON_NAME} appointment is tomorrow — ${formatDate(booking.date)}`,
-    text: `Hi ${firstNameOf(booking.name)},\n\nThis is a reminder that your appointment at ${SALON_NAME} is tomorrow:\n\nService: ${service.name}${service.priceLabel ? ` (${service.priceLabel})` : ''}\nWhen: ${clientWhen}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nSee you soon! If you need to change or cancel, please call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
+    text: `Hi ${firstNameOf(booking.name)},\n\nThis is a reminder that your appointment at ${SALON_NAME} is tomorrow:\n\nService: ${service.name}${service.priceLabel ? ` (${service.priceLabel})` : ''}\nWhen: ${clientWhen}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}${membershipLine}\n\nSee you soon! If you need to change or cancel, please call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
   };
   try {
     if (RESEND_API_KEY) await sendViaResend(mail);
@@ -1019,12 +1037,13 @@ async function sendRescheduleEmail(booking, service, oldDate, oldStartMinutes) {
   if (!emailIsConfigured()) return false;
   const newWhen = `${formatDate(booking.date)} at ${minutesToTime(booking.startMinutes)} (${TZ})`;
   const oldWhen = `${formatDate(oldDate)} at ${minutesToTime(oldStartMinutes)} (${TZ})`;
+  const membershipLine = await membershipEmailLine(booking, false);
   const gmailFrom = `"${SALON_NAME}" <${process.env.GMAIL_USER}>`;
   const mail = {
     from: RESEND_API_KEY ? RESEND_FROM : gmailFrom,
     to: booking.email,
     subject: `Your ${SALON_NAME} appointment has been rescheduled — ${formatDate(booking.date)}`,
-    text: `Hi ${firstNameOf(booking.name)},\n\nYour appointment at ${SALON_NAME} has been rescheduled:\n\nService: ${service.name}${service.priceLabel ? ` (${service.priceLabel})` : ''}\nWas: ${oldWhen}\nNow: ${newWhen}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nSee you soon! If you need to change or cancel, please call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
+    text: `Hi ${firstNameOf(booking.name)},\n\nYour appointment at ${SALON_NAME} has been rescheduled:\n\nService: ${service.name}${service.priceLabel ? ` (${service.priceLabel})` : ''}\nWas: ${oldWhen}\nNow: ${newWhen}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}${membershipLine}\n\nSee you soon! If you need to change or cancel, please call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
   };
   try {
     if (RESEND_API_KEY) await sendViaResend(mail);
@@ -1040,12 +1059,13 @@ async function sendRescheduleEmail(booking, service, oldDate, oldStartMinutes) {
 async function sendCancelEmail(booking, service) {
   if (!emailIsConfigured()) return false;
   const when = `${formatDate(booking.date)} at ${minutesToTime(booking.startMinutes)} (${TZ})`;
+  const membershipLine = await membershipEmailLine(booking, false);
   const gmailFrom = `"${SALON_NAME}" <${process.env.GMAIL_USER}>`;
   const mail = {
     from: RESEND_API_KEY ? RESEND_FROM : gmailFrom,
     to: booking.email,
     subject: `Your ${SALON_NAME} appointment has been cancelled — ${formatDate(booking.date)}`,
-    text: `Hi ${firstNameOf(booking.name)},\n\nYour appointment at ${SALON_NAME} has been cancelled:\n\nService: ${service.name}${service.priceLabel ? ` (${service.priceLabel})` : ''}\nWhen: ${when}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}\n\nIf you'd like to book again, visit pxcutzz.com or call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
+    text: `Hi ${firstNameOf(booking.name)},\n\nYour appointment at ${SALON_NAME} has been cancelled:\n\nService: ${service.name}${service.priceLabel ? ` (${service.priceLabel})` : ''}\nWhen: ${when}\nSalon: ${SALON_ADDRESS} — ${SALON_PHONE}${membershipLine}\n\nIf you'd like to book again, visit pxcutzz.com or call ${SALON_PHONE}.\n\nThanks for booking with ${SALON_NAME}!`,
   };
   try {
     if (RESEND_API_KEY) await sendViaResend(mail);
@@ -1305,7 +1325,7 @@ app.post('/api/bookings', async (req, res) => {
       sendMembershipWelcomeSms(saved.name, saved.phone, today);
     }
   }
-  const emailSent = await sendBookingEmails(saved, service);
+  const emailSent = await sendBookingEmails(saved, service, membershipJoined);
   if (emailSent) {
     // best-effort flag update (works on every backend); the emails did
     // go out either way, so a failure here never fails the booking.
